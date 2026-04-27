@@ -218,18 +218,23 @@ function OverviewPanel({
     const totalRevenue = history
       .filter(o => o.status !== 'cancelado' && o.status !== 'aguardando_pagamento')
       .reduce((a, o) => a + Number(o.total_amount || 0), 0);
+    const toShip = history.filter(
+      o => o.status === 'pago' && o.origin === 'whatsapp'
+    );
     return {
       todayCount: todayOrders.length,
       revenueToday,
       pendingCount: pending.length,
       totalRevenue,
+      toShipCount: toShip.length,
+      toShipValue: toShip.reduce((a, o) => a + Number(o.total_amount || 0), 0),
     };
   }, [history, pending]);
 
   return (
     <div className="space-y-6">
       {/* KPI cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <KpiCard
           icon={<TrendingUp size={18} />}
           label="Vendas hoje"
@@ -248,6 +253,12 @@ function OverviewPanel({
           value={String(stats.pendingCount)}
           tone={stats.pendingCount > 0 ? 'amber' : 'zinc'}
           onClick={() => onChangeView('pending')}
+        />
+        <KpiCard
+          icon={<Send size={18} />}
+          label="A enviar (CTT)"
+          value={String(stats.toShipCount)}
+          tone={stats.toShipCount > 0 ? 'blue' : 'zinc'}
         />
         <KpiCard
           icon={<Euro size={18} />}
@@ -316,13 +327,14 @@ function KpiCard({
   icon: React.ReactNode;
   label: string;
   value: string;
-  tone: 'black' | 'emerald' | 'amber' | 'zinc';
+  tone: 'black' | 'emerald' | 'amber' | 'zinc' | 'blue';
   onClick?: () => void;
 }) {
   const toneMap: Record<string, string> = {
     black: 'bg-black text-white',
     emerald: 'bg-emerald-500 text-white',
     amber: 'bg-amber-500 text-white',
+    blue: 'bg-blue-500 text-white',
     zinc: 'bg-white text-black border border-gray-100',
   };
   const Wrap: any = onClick ? 'button' : 'div';
@@ -398,11 +410,17 @@ function OrdersTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {orders.map(o => (
+            {orders.map(o => {
+              const needsShipping = o.status === 'pago' && o.origin === 'whatsapp';
+              return (
               <tr
                 key={o.id}
                 onClick={() => onView(o)}
-                className="hover:bg-gray-50/40 transition cursor-pointer"
+                className={`transition cursor-pointer ${
+                  needsShipping
+                    ? 'bg-blue-50/60 hover:bg-blue-100/60 border-l-4 border-l-blue-500'
+                    : 'hover:bg-gray-50/40'
+                }`}
               >
                 <td className="px-6 py-4 font-mono text-xs font-black">#{o.id}</td>
                 <td className="px-6 py-4 text-sm">
@@ -410,7 +428,17 @@ function OrdersTable({
                   {o.whatsapp_number && <p className="text-[10px] text-zinc-400 font-mono">{o.whatsapp_number}</p>}
                 </td>
                 <td className="px-6 py-4">
-                  <span className="text-[10px] uppercase font-bold text-zinc-500">{o.origin || '—'}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] uppercase font-bold text-zinc-500">{o.origin || '—'}</span>
+                    {needsShipping && (
+                      <span
+                        title="Pago — pronto para enviar via CTT"
+                        className="text-[9px] font-black bg-blue-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1"
+                      >
+                        <Send size={9} /> CTT
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-6 py-4 text-xs text-zinc-500">{o.items?.length || 0}</td>
                 <td className="px-6 py-4 font-mono font-black text-right">€ {Number(o.total_amount).toFixed(2)}</td>
@@ -452,7 +480,8 @@ function OrdersTable({
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1077,7 +1106,7 @@ function PendingOrdersPanel({
                 </p>
 
                 {/* Bloco de envio CTT (só quando origem = whatsapp) */}
-                {(o.origin === 'whatsapp' || o.origin === 'website') && (
+                {o.origin === 'whatsapp' && (
                   <div className="mt-2 p-2 rounded-lg bg-blue-50/50 border border-blue-100 space-y-1">
                     <p className="text-[10px] uppercase font-black text-blue-700 flex items-center gap-1">
                       <Send size={10} /> Dados de envio (CTT)

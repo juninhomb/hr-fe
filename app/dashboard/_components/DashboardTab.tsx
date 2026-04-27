@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   TrendingUp, ShoppingCart, AlertCircle, Users, RefreshCw,
   Clock, Package, Euro, ArrowRight, MessageCircle, Store, Globe,
-  Crown, Phone,
+  Crown, Phone, Send,
 } from 'lucide-react';
 import api from '../../../lib/api';
 
@@ -22,6 +22,8 @@ type DashboardStats = {
   total_customers: number;
   pending_count: number;
   pending_value: number;
+  to_ship_count: number;
+  to_ship_value: number;
   total_stock: number;
   total_products: number;
   revenue_series: { dia: string; revenue: number; orders_count: number }[];
@@ -116,13 +118,21 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
       </div>
 
       {/* Quick links secundários */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <QuickStat
           icon={Clock}
           label="Pendentes"
           value={String(stats?.pending_count ?? 0)}
           extra={stats ? `€ ${Number(stats.pending_value).toFixed(2)}` : '€ 0.00'}
           tone="amber"
+          onClick={() => go('sales')}
+        />
+        <QuickStat
+          icon={Send}
+          label="A enviar (CTT)"
+          value={String(stats?.to_ship_count ?? 0)}
+          extra={stats ? `€ ${Number(stats.to_ship_value).toFixed(2)}` : '€ 0.00'}
+          tone="blue"
           onClick={() => go('sales')}
         />
         <QuickStat
@@ -280,13 +290,14 @@ function QuickStat({
   label: string;
   value: string;
   extra?: string;
-  tone: 'amber' | 'zinc' | 'emerald';
+  tone: 'amber' | 'zinc' | 'emerald' | 'blue';
   onClick?: () => void;
 }) {
   const map: Record<string, string> = {
     amber: 'text-amber-600 bg-amber-50',
     zinc: 'text-zinc-600 bg-zinc-100',
     emerald: 'text-emerald-600 bg-emerald-50',
+    blue: 'text-blue-600 bg-blue-50',
   };
   return (
     <button
