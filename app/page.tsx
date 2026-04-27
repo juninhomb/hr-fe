@@ -8,10 +8,11 @@ export default function Home() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
     const token = localStorage.getItem('hrstore-token');
     if (!token) {
       router.push('/login');
+    } else {
+      setMounted(true);
     }
   }, [router]);
 

@@ -6,8 +6,7 @@ const nextConfig = {
   devIndicators: {
     appIsrStatus: false,
   },
-  // Se precisares de ignorar erros de lint ou typescript no build para andar mais rápido:
-  eslint: { ignoreDuringBuilds: true },
+  // Se precisares de ignorar erros de typescript no build para andar mais rápido:
   typescript: { ignoreBuildErrors: true },
 };
 
