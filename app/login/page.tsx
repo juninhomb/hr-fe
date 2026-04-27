@@ -60,7 +60,6 @@ export default function LoginPage() {
                 type="text"
                 required
                 autoFocus
-                placeholder="admin"
                 className="w-full pl-11 pr-4 py-3.5 rounded-2xl bg-zinc-50 border border-transparent focus:bg-white focus:border-black focus:ring-2 focus:ring-black/10 outline-none transition text-sm lowercase"
                 value={username}
                 onChange={e => setUsername(e.target.value.toLowerCase())}
