@@ -1,7 +1,14 @@
 import axios from 'axios';
 
+// Base URL do backend.
+// - Em dev: http://localhost:3001 (ou definir NEXT_PUBLIC_API_URL=...)
+// - Em prod: NEXT_PUBLIC_API_URL=https://api.hrstorept.com
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ||
+  'http://localhost:3001';
+
 const api = axios.create({
-  baseURL: 'http://localhost:3001/api/orders',
+  baseURL: `${API_BASE}/api/orders`,
 });
 
 api.interceptors.request.use((config) => {
