@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Search, MoreHorizontal, Pencil, Trash2, RefreshCw, X, Layers, Package } from 'lucide-react';
+import { Plus, Search, MoreHorizontal, Pencil, Trash2, RefreshCw, X, Layers, Package, Boxes, Euro } from 'lucide-react';
 import api from '../../../lib/api';
 
 type BaseProduct = { id: number; name: string; base_price: number; variant_count: number };
@@ -78,6 +78,20 @@ export default function InventoryTab() {
     return products.some(p => p.sku === skuUp);
   }, [form.sku, products, modalMode]);
 
+  // Totais de stock (unidades + valor a preço de venda)
+  const stockTotals = useMemo(() => {
+    return products.reduce(
+      (acc, p) => {
+        const units = Number(p.stock) || 0;
+        const price = Number(p.price) || 0;
+        acc.units += units;
+        acc.value += units * price;
+        return acc;
+      },
+      { units: 0, value: 0 }
+    );
+  }, [products]);
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
@@ -147,6 +161,28 @@ export default function InventoryTab() {
 
   return (
     <>
+      {/* Cards de totais (estilo Dashboard) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6 animate-in slide-in-from-bottom-4">
+        <div className="bg-black text-white rounded-[32px] p-7 shadow-sm">
+          <div className="flex items-center gap-2 mb-4">
+            <Boxes size={16} />
+            <span className="text-[11px] font-bold uppercase tracking-wider">Itens em Stock</span>
+          </div>
+          <div className="text-4xl font-black font-mono">
+            {stockTotals.units.toLocaleString('pt-PT')}
+          </div>
+        </div>
+        <div className="bg-emerald-500 text-white rounded-[32px] p-7 shadow-sm">
+          <div className="flex items-center gap-2 mb-4">
+            <Euro size={16} />
+            <span className="text-[11px] font-bold uppercase tracking-wider">Valor em Stock</span>
+          </div>
+          <div className="text-4xl font-black font-mono">
+            € {stockTotals.value.toFixed(2)}
+          </div>
+        </div>
+      </div>
+
       <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden animate-in slide-in-from-bottom-4">
         {/* Header */}
         <div className="p-8 border-b border-gray-50 flex flex-col sm:flex-row sm:items-center gap-4">
@@ -239,6 +275,26 @@ export default function InventoryTab() {
                 </tr>
               )}
             </tbody>
+            {products.length > 0 && (
+              <tfoot className="bg-gray-50/70 border-t-2 border-gray-100">
+                <tr>
+                  <td className="px-8 py-5" colSpan={2}>
+                    <span className="text-[10px] uppercase font-black tracking-wider text-black">
+                      Total ({products.length} {products.length === 1 ? 'item' : 'itens'})
+                    </span>
+                  </td>
+                  <td className="px-8 py-5 text-right font-mono font-black text-sm text-emerald-600">
+                    € {stockTotals.value.toFixed(2)}
+                  </td>
+                  <td className="px-8 py-5 text-center">
+                    <span className="px-4 py-1.5 rounded-full text-[11px] font-black bg-black text-white">
+                      {stockTotals.units} UN.
+                    </span>
+                  </td>
+                  <td className="px-8 py-5"></td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>
