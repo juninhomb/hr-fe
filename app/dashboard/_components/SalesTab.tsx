@@ -508,7 +508,6 @@ function OrdersTable({
           <DropItem
             icon={<Send size={14} />}
             label="Enviar via CTT"
-            badge="placeholder"
             disabled={current.status !== 'pago'}
             onClick={() => { setOpenMenu(null); onShip(current); }}
           />
