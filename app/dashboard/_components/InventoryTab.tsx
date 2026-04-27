@@ -1,7 +1,10 @@
 'use client';
-import React, { useState, useEffect } from 'react';
-import { Plus, Search, MoreHorizontal, Pencil, Trash2, RefreshCw, X } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Plus, Search, MoreHorizontal, Pencil, Trash2, RefreshCw, X, Layers, Package } from 'lucide-react';
 import api from '../../../lib/api';
+
+type BaseProduct = { id: number; name: string; base_price: number; variant_count: number };
+type CreateMode = 'new_product' | 'new_variant';
 
 export default function InventoryTab() {
   const [products, setProducts] = useState<any[]>([]);
@@ -9,10 +12,15 @@ export default function InventoryTab() {
   const [search, setSearch] = useState('');
 
   const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
+  const [createMode, setCreateMode] = useState<CreateMode>('new_product');
   const [editingProduct, setEditingProduct] = useState<any>(null);
-  const [form, setForm] = useState({ name: '', base_price: '', sku: '', color: '', size: '', stock_quantity: '0' });
+  const [form, setForm] = useState({
+    name: '', base_price: '', sku: '', color: '', size: '', stock_quantity: '0',
+    product_id: '' as string,
+  });
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [baseProducts, setBaseProducts] = useState<BaseProduct[]>([]);
 
   const [openMenu, setOpenMenu] = useState<{ id: string; top: number; right: number } | null>(null);
   const [deletingProduct, setDeletingProduct] = useState<any>(null);
@@ -39,10 +47,13 @@ export default function InventoryTab() {
   }, [search]);
 
   const openModal = () => {
-    setForm({ name: '', base_price: '', sku: '', color: '', size: '', stock_quantity: '0' });
+    setForm({ name: '', base_price: '', sku: '', color: '', size: '', stock_quantity: '0', product_id: '' });
     setFormError('');
     setEditingProduct(null);
+    setCreateMode('new_product');
     setModalMode('create');
+    // Carregar produtos-base para o modo "adicionar variante"
+    api.get('/products/base').then(r => setBaseProducts(r.data || [])).catch(() => {});
   };
 
   const openEditModal = (item: any) => {
@@ -53,28 +64,63 @@ export default function InventoryTab() {
       color: item.color || '',
       size: item.size || '',
       stock_quantity: String(item.stock ?? 0),
+      product_id: '',
     });
     setFormError('');
     setEditingProduct(item);
     setModalMode('edit');
   };
 
+  // Detecta SKU duplicado em tempo real (avisa antes do submit)
+  const skuConflict = useMemo(() => {
+    if (modalMode !== 'create' || !form.sku.trim()) return false;
+    const skuUp = form.sku.trim().toUpperCase();
+    return products.some(p => p.sku === skuUp);
+  }, [form.sku, products, modalMode]);
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
+
+    // Validações client-side
+    if (modalMode === 'create' && skuConflict) {
+      setFormError('Este SKU já existe. Escolhe outro.');
+      return;
+    }
+
     setSaving(true);
     try {
-      const payload = {
-        name: form.name,
-        base_price: parseFloat(form.base_price),
-        color: form.color || null,
-        size: form.size || null,
-        stock_quantity: parseInt(form.stock_quantity) || 0,
-      };
       if (modalMode === 'create') {
-        await api.post('/products', { ...payload, sku: form.sku });
+        if (createMode === 'new_product') {
+          await api.post('/products', {
+            name: form.name.trim(),
+            base_price: parseFloat(form.base_price) || 0,
+            sku: form.sku.trim().toUpperCase(),
+            color: form.color.trim() || null,
+            size: form.size.trim() || null,
+            stock_quantity: parseInt(form.stock_quantity) || 0,
+          });
+        } else {
+          if (!form.product_id) {
+            setFormError('Seleciona um produto existente.');
+            setSaving(false);
+            return;
+          }
+          await api.post(`/products/${form.product_id}/variants`, {
+            sku: form.sku.trim().toUpperCase(),
+            color: form.color.trim() || null,
+            size: form.size.trim() || null,
+            stock_quantity: parseInt(form.stock_quantity) || 0,
+          });
+        }
       } else {
-        await api.put(`/products/${editingProduct.sku}`, payload);
+        await api.put(`/products/${editingProduct.sku}`, {
+          name: form.name.trim(),
+          base_price: parseFloat(form.base_price) || 0,
+          color: form.color.trim() || null,
+          size: form.size.trim() || null,
+          stock_quantity: parseInt(form.stock_quantity) || 0,
+        });
       }
       setModalMode(null);
       fetchProducts();
@@ -229,59 +275,142 @@ export default function InventoryTab() {
 
       {/* Modal Criar / Editar Produto */}
       {modalMode !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-md mx-4 p-8">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold">{modalMode === 'create' ? 'Novo Produto' : 'Editar Produto'}</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-lg p-7 max-h-[92vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-5">
+              <div>
+                <h3 className="text-xl font-bold">
+                  {modalMode === 'create'
+                    ? (createMode === 'new_product' ? 'Novo Produto' : 'Adicionar Variante')
+                    : 'Editar Variante'}
+                </h3>
+                <p className="text-[11px] text-zinc-500 mt-0.5">
+                  {modalMode === 'edit'
+                    ? `SKU ${editingProduct?.sku} (não editável)`
+                    : createMode === 'new_product'
+                      ? 'Cria produto-base + primeira variante (cor/tamanho/SKU)'
+                      : 'Adiciona uma nova combinação de cor/tamanho a um produto existente'}
+                </p>
+              </div>
               <button onClick={() => setModalMode(null)} className="p-2 hover:bg-zinc-100 rounded-xl transition">
                 <X size={20} />
               </button>
             </div>
+
+            {/* Toggle de modo (só na criação) */}
+            {modalMode === 'create' && (
+              <div className="grid grid-cols-2 gap-1 p-1 bg-zinc-100 rounded-xl mb-5">
+                <button
+                  type="button"
+                  onClick={() => setCreateMode('new_product')}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition ${
+                    createMode === 'new_product' ? 'bg-white shadow-sm text-black' : 'text-zinc-500'
+                  }`}
+                >
+                  <Package size={13} /> Novo Produto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreateMode('new_variant')}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition ${
+                    createMode === 'new_variant' ? 'bg-white shadow-sm text-black' : 'text-zinc-500'
+                  }`}
+                >
+                  <Layers size={13} /> Adicionar Variante
+                </button>
+              </div>
+            )}
+
             <form onSubmit={handleSave} className="space-y-4">
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Nome do Produto *</label>
-                <input
-                  required
-                  value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black"
-                  placeholder="Ex: Camisola Oversize"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
+              {/* Modo: adicionar variante a produto existente */}
+              {modalMode === 'create' && createMode === 'new_variant' && (
                 <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Preço Base (€) *</label>
-                  <input
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">
+                    Produto existente *
+                  </label>
+                  <select
                     required
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={form.base_price}
-                    onChange={e => setForm(f => ({ ...f, base_price: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black"
-                    placeholder="0.00"
-                  />
+                    value={form.product_id}
+                    onChange={e => setForm(f => ({ ...f, product_id: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black bg-white"
+                  >
+                    <option value="">— Selecionar produto —</option>
+                    {baseProducts.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} (€ {Number(p.base_price).toFixed(2)} · {p.variant_count} variante{p.variant_count !== 1 ? 's' : ''})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-zinc-400 mt-1">
+                    Preço base e nome herdados do produto. Define só cor/tamanho/SKU/stock abaixo.
+                  </p>
                 </div>
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">SKU *</label>
-                  <input
-                    required={modalMode === 'create'}
-                    disabled={modalMode === 'edit'}
-                    value={form.sku}
-                    onChange={e => setForm(f => ({ ...f, sku: e.target.value.toUpperCase() }))}
-                    className={`w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-black ${modalMode === 'edit' ? 'bg-zinc-50 text-zinc-400 cursor-not-allowed' : ''}`}
-                    placeholder="EX: CAM-BLK-M"
-                  />
-                </div>
+              )}
+
+              {/* Nome + preço (só para novo produto ou edit) */}
+              {(modalMode === 'edit' || (modalMode === 'create' && createMode === 'new_product')) && (
+                <>
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">
+                      Nome do Produto *
+                    </label>
+                    <input
+                      required
+                      value={form.name}
+                      onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black"
+                      placeholder="Ex: Camisola Oversize"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">
+                      Preço Base (€) *
+                    </label>
+                    <input
+                      required
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.base_price}
+                      onChange={e => setForm(f => ({ ...f, base_price: e.target.value }))}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black font-mono"
+                      placeholder="0.00"
+                    />
+                  </div>
+                </>
+              )}
+
+              {/* SKU */}
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">
+                  SKU * <span className="text-zinc-400 normal-case font-normal">(único, ex: BIQ-AZUL-M)</span>
+                </label>
+                <input
+                  required={modalMode === 'create'}
+                  disabled={modalMode === 'edit'}
+                  value={form.sku}
+                  onChange={e => setForm(f => ({ ...f, sku: e.target.value.toUpperCase() }))}
+                  className={`w-full border rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 ${
+                    skuConflict
+                      ? 'border-red-300 focus:ring-red-500 bg-red-50'
+                      : 'border-gray-200 focus:ring-black'
+                  } ${modalMode === 'edit' ? 'bg-zinc-50 text-zinc-400 cursor-not-allowed' : ''}`}
+                  placeholder="EX: CAM-BLK-M"
+                />
+                {skuConflict && (
+                  <p className="text-[11px] text-red-600 font-bold mt-1">⚠ Este SKU já está em uso.</p>
+                )}
               </div>
+
+              {/* Cor + Tamanho */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Cor</label>
                   <input
                     value={form.color}
                     onChange={e => setForm(f => ({ ...f, color: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black"
-                    placeholder="Ex: Preto"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black uppercase"
+                    placeholder="Ex: PRETO"
                   />
                 </div>
                 <div>
@@ -289,24 +418,30 @@ export default function InventoryTab() {
                   <input
                     value={form.size}
                     onChange={e => setForm(f => ({ ...f, size: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black uppercase"
                     placeholder="Ex: M"
                   />
                 </div>
               </div>
+
+              {/* Stock */}
               <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Stock</label>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">
+                  Stock {modalMode === 'create' ? '(inicial)' : ''}
+                </label>
                 <input
                   type="number"
                   min="0"
                   value={form.stock_quantity}
                   onChange={e => setForm(f => ({ ...f, stock_quantity: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black"
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-black"
                 />
               </div>
+
               {formError && (
                 <p className="text-red-500 text-xs font-semibold bg-red-50 px-4 py-2 rounded-xl">{formError}</p>
               )}
+
               <div className="flex gap-3 pt-2">
                 <button
                   type="button"
@@ -317,10 +452,14 @@ export default function InventoryTab() {
                 </button>
                 <button
                   type="submit"
-                  disabled={saving}
-                  className="flex-1 bg-black text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-zinc-800 transition disabled:opacity-50"
+                  disabled={saving || skuConflict}
+                  className="flex-1 bg-black text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-zinc-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {saving ? 'A guardar...' : modalMode === 'create' ? 'Criar Produto' : 'Guardar'}
+                  {saving
+                    ? 'A guardar...'
+                    : modalMode === 'create'
+                      ? (createMode === 'new_product' ? 'Criar Produto' : 'Adicionar Variante')
+                      : 'Guardar'}
                 </button>
               </div>
             </form>

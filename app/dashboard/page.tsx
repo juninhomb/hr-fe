@@ -65,7 +65,7 @@ export default function DashboardPage() {
           <ProfileMenu />
         </header>
 
-        {activeTab === 'dashboard' && <DashboardTab />}
+        {activeTab === 'dashboard' && <DashboardTab onNavigate={setActiveTab} />}
         {activeTab === 'inventory' && <InventoryTab />}
         {activeTab === 'sales' && <SalesTab />}
         {activeTab === 'customers' && <CustomersTab />}

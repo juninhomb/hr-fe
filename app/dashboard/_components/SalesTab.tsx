@@ -133,6 +133,7 @@ function OverviewPanel({
   const [pending, setPending] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState<number | null>(null);
+  const [detailsId, setDetailsId] = useState<number | null>(null);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -156,7 +157,7 @@ function OverviewPanel({
       return;
     }
     if (!o.items || o.items.length === 0) {
-      toast('error', 'Pedido sem itens. Abre "Pedidos WhatsApp" para adicionar antes de confirmar.');
+      toast('error', 'Pedido sem itens. Abre "Pedidos Pendentes" para adicionar antes de confirmar.');
       return;
     }
     setActionId(o.id);
@@ -189,7 +190,7 @@ function OverviewPanel({
   };
 
   const handleDelete = async (o: Order) => {
-    const willRestoreStock = ['pago', 'enviado', 'entregue'].includes(o.status);
+    const willRestoreStock = o.status !== 'cancelado';
     const msg = willRestoreStock
       ? `Eliminar pedido #${o.id}? O stock será DEVOLVIDO ao inventário.`
       : `Eliminar pedido #${o.id}?`;
@@ -269,8 +270,8 @@ function OverviewPanel({
           onClick={() => onChangeView('pending')}
           className="flex-1 bg-white border border-gray-100 text-black px-6 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:border-black transition"
         >
-          <MessageCircle size={20} />
-          Pedidos WhatsApp
+          <Clock size={20} />
+          Pedidos Pendentes
           {stats.pendingCount > 0 && (
             <span className="bg-amber-500 text-white text-[10px] font-black rounded-full px-2 py-0.5">
               {stats.pendingCount}
@@ -298,8 +299,13 @@ function OverviewPanel({
           onConfirm={handleConfirm}
           onShip={handleShip}
           onDelete={handleDelete}
+          onView={(o) => setDetailsId(o.id)}
         />
       </div>
+
+      {detailsId !== null && (
+        <OrderDetailsModal orderId={detailsId} onClose={() => setDetailsId(null)} />
+      )}
     </div>
   );
 }
@@ -346,7 +352,7 @@ function statusBadge(status: string) {
 }
 
 function OrdersTable({
-  orders, loading, actionId, onConfirm, onShip, onDelete,
+  orders, loading, actionId, onConfirm, onShip, onDelete, onView,
 }: {
   orders: Order[];
   loading: boolean;
@@ -354,6 +360,7 @@ function OrdersTable({
   onConfirm: (o: Order) => void;
   onShip: (o: Order) => void;
   onDelete: (o: Order) => void;
+  onView: (o: Order) => void;
 }) {
   const [openMenu, setOpenMenu] = useState<{ id: number; top: number; right: number } | null>(null);
 
@@ -392,7 +399,11 @@ function OrdersTable({
           </thead>
           <tbody className="divide-y divide-gray-50">
             {orders.map(o => (
-              <tr key={o.id} className="hover:bg-gray-50/40 transition">
+              <tr
+                key={o.id}
+                onClick={() => onView(o)}
+                className="hover:bg-gray-50/40 transition cursor-pointer"
+              >
                 <td className="px-6 py-4 font-mono text-xs font-black">#{o.id}</td>
                 <td className="px-6 py-4 text-sm">
                   <p className="font-bold">{o.full_name || '—'}</p>
@@ -411,22 +422,34 @@ function OrdersTable({
                 <td className="px-6 py-4 text-right text-[11px] text-zinc-400">
                   {new Date(o.created_at).toLocaleString('pt-PT')}
                 </td>
-                <td className="px-6 py-4 text-center">
-                  <button
-                    disabled={actionId === o.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      setOpenMenu(
-                        openMenu?.id === o.id
-                          ? null
-                          : { id: o.id, top: rect.bottom + 4, right: window.innerWidth - rect.right }
-                      );
-                    }}
-                    className="hover:text-black transition p-1 rounded-lg hover:bg-zinc-100 text-zinc-400 disabled:opacity-40"
-                  >
-                    <MoreHorizontal size={18} />
-                  </button>
+                <td
+                  className="px-6 py-4 text-center"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onView(o); }}
+                      title="Ver detalhes"
+                      className="hover:text-black transition p-1 rounded-lg hover:bg-zinc-100 text-zinc-400"
+                    >
+                      <Eye size={16} />
+                    </button>
+                    <button
+                      disabled={actionId === o.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setOpenMenu(
+                          openMenu?.id === o.id
+                            ? null
+                            : { id: o.id, top: rect.bottom + 4, right: window.innerWidth - rect.right }
+                        );
+                      }}
+                      className="hover:text-black transition p-1 rounded-lg hover:bg-zinc-100 text-zinc-400 disabled:opacity-40"
+                    >
+                      <MoreHorizontal size={18} />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -441,6 +464,12 @@ function OrdersTable({
           style={{ position: 'fixed', top: openMenu.top, right: openMenu.right, zIndex: 50 }}
           className="bg-white border border-gray-100 rounded-2xl shadow-xl py-1 w-56 animate-in fade-in slide-in-from-top-2"
         >
+          <DropItem
+            icon={<Eye size={14} />}
+            label="Ver Detalhes"
+            onClick={() => { setOpenMenu(null); onView(current); }}
+          />
+          <div className="border-t border-gray-100 my-1" />
           <DropItem
             icon={<Check size={14} />}
             label="Confirmar Pagamento"
@@ -588,6 +617,10 @@ function PDVPanel({
       toast('error', 'Carrinho vazio.');
       return;
     }
+    if (!selectedCustomer) {
+      toast('error', 'Seleciona um cliente para registar a venda.');
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await api.post('/create', {
@@ -602,7 +635,7 @@ function PDVPanel({
       toast(
         'success',
         wasUnpaid
-          ? `Pedido #${res.data.orderId} criado como PENDENTE — stock NÃO foi deduzido.`
+          ? `Pedido #${res.data.orderId} criado como PENDENTE — stock reservado até confirmação.`
           : `Venda #${res.data.orderId} registada — € ${total.toFixed(2)} (stock atualizado).`
       );
       setCart([]);
@@ -704,42 +737,21 @@ function PDVPanel({
           </div>
 
           <div className="p-6 border-b border-gray-50 space-y-2">
-            <label className="text-[10px] uppercase font-bold text-zinc-400">Cliente (opcional)</label>
-            {selectedCustomer ? (
-              <div className="flex items-center justify-between bg-zinc-50 rounded-xl px-3 py-2">
-                <div>
-                  <p className="text-sm font-bold">{selectedCustomer.full_name || '—'}</p>
-                  <p className="text-xs text-zinc-500 font-mono">{selectedCustomer.whatsapp_number}</p>
-                </div>
-                <button onClick={() => setSelectedCustomer(null)} className="text-zinc-400 hover:text-black">
-                  <X size={16} />
-                </button>
-              </div>
-            ) : (
-              <>
-                <input
-                  type="text"
-                  value={customerQuery}
-                  onChange={e => setCustomerQuery(e.target.value)}
-                  placeholder="Procurar cliente..."
-                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-black"
-                />
-                {customerQuery && customers.length > 0 && (
-                  <div className="max-h-32 overflow-y-auto border border-gray-100 rounded-xl">
-                    {customers.slice(0, 6).map(c => (
-                      <button
-                        key={c.id}
-                        onClick={() => { setSelectedCustomer(c); setCustomerQuery(''); }}
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-50 border-b last:border-b-0 border-gray-100"
-                      >
-                        <p className="font-bold">{c.full_name || '—'}</p>
-                        <p className="text-xs text-zinc-500 font-mono">{c.whatsapp_number}</p>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <p className="text-[11px] text-zinc-400">Sem cliente = venda anónima de balcão.</p>
-              </>
+            <label className="text-[10px] uppercase font-bold text-zinc-400">
+              Cliente <span className="text-red-500">*</span>
+            </label>
+            <CustomerCombobox
+              customers={customers}
+              query={customerQuery}
+              setQuery={setCustomerQuery}
+              selected={selectedCustomer}
+              onSelect={(c) => { setSelectedCustomer(c); setCustomerQuery(''); }}
+              onClear={() => setSelectedCustomer(null)}
+            />
+            {!selectedCustomer && (
+              <p className="text-[11px] text-red-500 font-bold flex items-center gap-1">
+                <AlertCircle size={11} /> Cliente obrigatório para registar venda.
+              </p>
             )}
           </div>
 
@@ -810,13 +822,13 @@ function PDVPanel({
               <span className="text-xs font-bold text-zinc-700">
                 Marcar como <span className="text-amber-600">não paga</span>
               </span>
-              <span className="ml-auto text-[10px] text-zinc-500">stock não deduzido</span>
+              <span className="ml-auto text-[10px] text-zinc-500">stock reservado</span>
             </label>
 
             <button
               onClick={finalize}
-              disabled={submitting || cart.length === 0}
-              className={`w-full py-3 rounded-xl font-bold text-sm transition disabled:opacity-40 ${
+              disabled={submitting || cart.length === 0 || !selectedCustomer}
+              className={`w-full py-3 rounded-xl font-bold text-sm transition disabled:opacity-40 disabled:cursor-not-allowed ${
                 markAsUnpaid
                   ? 'bg-amber-500 text-white hover:bg-amber-600'
                   : 'bg-black text-white hover:bg-zinc-800'
@@ -824,9 +836,11 @@ function PDVPanel({
             >
               {submitting
                 ? 'A registar...'
-                : markAsUnpaid
-                  ? 'Criar Pedido Pendente'
-                  : 'Finalizar Venda'}
+                : !selectedCustomer
+                  ? 'Selecione um cliente'
+                  : markAsUnpaid
+                    ? 'Criar Pedido Pendente'
+                    : 'Finalizar Venda'}
             </button>
           </div>
         </div>
@@ -836,7 +850,7 @@ function PDVPanel({
 }
 
 // =============================================================
-// PENDENTES (WhatsApp / IA) — com filtros
+// PENDENTES (WhatsApp / IA / PDV não pago) — com filtros
 // =============================================================
 function PendingOrdersPanel({
   onBack, toast,
@@ -921,14 +935,17 @@ function PendingOrdersPanel({
   };
 
   const cancelOrder = async (order: Order) => {
-    if (!window.confirm(`Cancelar pedido #${order.id}?`)) return;
+    if (!window.confirm(`Eliminar pedido #${order.id}? O stock reservado será devolvido ao inventário.`)) return;
     setActionId(order.id);
     try {
-      await api.post(`/${order.id}/cancel`);
-      toast('success', `Pedido #${order.id} cancelado.`);
+      const res = await api.delete(`/${order.id}`);
+      toast('success',
+        res.data?.stockRestored
+          ? `Pedido #${order.id} eliminado — stock devolvido ao inventário.`
+          : `Pedido #${order.id} eliminado.`);
       fetchPending();
     } catch (err: any) {
-      toast('error', err?.response?.data?.error || 'Erro ao cancelar');
+      toast('error', err?.response?.data?.error || 'Erro ao eliminar');
     } finally {
       setActionId(null);
     }
@@ -945,7 +962,7 @@ function PendingOrdersPanel({
         </button>
         <div className="flex-1">
           <h3 className="font-black text-xl">Pedidos a aguardar pagamento</h3>
-          <p className="text-xs text-zinc-500">Pedidos criados pelo bot WhatsApp ou parciais.</p>
+          <p className="text-xs text-zinc-500">Inclui pedidos do bot WhatsApp e vendas de loja física marcadas como não pagas.</p>
         </div>
         <button
           onClick={fetchPending}
@@ -1117,9 +1134,9 @@ function PendingOrdersPanel({
                 <button
                   onClick={() => cancelOrder(o)}
                   disabled={actionId === o.id}
-                  className="px-4 py-2 rounded-xl bg-zinc-100 text-zinc-600 text-xs font-bold hover:bg-zinc-200 transition disabled:opacity-40 flex items-center gap-1"
+                  className="px-4 py-2 rounded-xl bg-red-50 text-red-600 text-xs font-bold hover:bg-red-100 transition disabled:opacity-40 flex items-center gap-1"
                 >
-                  <X size={13} /> Cancelar
+                  <Trash2 size={13} /> Excluir
                 </button>
               </div>
             </div>
@@ -1163,9 +1180,6 @@ function Select({
   );
 }
 
-// =============================================================
-// Modal: completar itens
-// =============================================================
 function CompleteItemsModal({
   order, onClose, onConfirm, isSubmitting,
 }: {
@@ -1292,6 +1306,278 @@ function CompleteItemsModal({
               {isSubmitting ? 'A confirmar...' : 'Confirmar Pagamento'}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================
+// CustomerCombobox — dropdown com pesquisa
+// =============================================================
+function CustomerCombobox({
+  customers, query, setQuery, selected, onSelect, onClear,
+}: {
+  customers: Customer[];
+  query: string;
+  setQuery: (q: string) => void;
+  selected: Customer | null;
+  onSelect: (c: Customer) => void;
+  onClear: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = React.useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('mousedown', onClickOutside);
+    return () => window.removeEventListener('mousedown', onClickOutside);
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return customers;
+    return customers.filter(c =>
+      (c.full_name || '').toLowerCase().includes(q)
+      || (c.whatsapp_number || '').toLowerCase().includes(q)
+      || (c.email || '').toLowerCase().includes(q)
+    );
+  }, [customers, query]);
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border text-sm transition ${
+          selected ? 'bg-zinc-50 border-gray-200' : 'bg-white border-gray-200 hover:border-black'
+        }`}
+      >
+        {selected ? (
+          <div className="flex-1 text-left min-w-0">
+            <p className="font-bold truncate">{selected.full_name || 'Sem nome'}</p>
+            <p className="text-xs text-zinc-500 font-mono truncate">{selected.whatsapp_number}</p>
+          </div>
+        ) : (
+          <span className="text-zinc-400">Selecionar cliente…</span>
+        )}
+        {selected ? (
+          <X
+            size={14}
+            onClick={(e) => { e.stopPropagation(); onClear(); }}
+            className="text-zinc-400 hover:text-black shrink-0"
+          />
+        ) : (
+          <span className="text-zinc-400 text-xs shrink-0">▼</span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute z-30 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+          <div className="p-2 border-b border-gray-100">
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+              <input
+                autoFocus
+                type="text"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Procurar por nome, número ou email…"
+                className="w-full pl-7 pr-2 py-2 text-xs rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-black"
+              />
+            </div>
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            {filtered.length === 0 ? (
+              <p className="text-xs text-zinc-400 text-center py-6">Nenhum cliente encontrado.</p>
+            ) : filtered.map(c => (
+              <button
+                key={c.id}
+                onClick={() => { onSelect(c); setOpen(false); }}
+                className={`w-full text-left px-3 py-2 text-sm hover:bg-zinc-50 border-b last:border-b-0 border-gray-100 ${
+                  selected?.id === c.id ? 'bg-emerald-50' : ''
+                }`}
+              >
+                <p className="font-bold truncate">{c.full_name || 'Sem nome'}</p>
+                <p className="text-[11px] text-zinc-500 font-mono">{c.whatsapp_number}</p>
+                {c.email && <p className="text-[11px] text-zinc-400 truncate">{c.email}</p>}
+              </button>
+            ))}
+          </div>
+          <div className="px-3 py-2 border-t border-gray-100 bg-zinc-50/50 text-[10px] text-zinc-500 flex justify-between">
+            <span>{filtered.length} de {customers.length}</span>
+            <span>Cliente é obrigatório</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =============================================================
+// OrderDetailsModal — visualização completa do pedido
+// =============================================================
+function OrderDetailsModal({
+  orderId, onClose,
+}: {
+  orderId: number;
+  onClose: () => void;
+}) {
+  const [order, setOrder] = useState<Order | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    api.get(`/${orderId}`)
+      .then(res => { if (alive) setOrder(res.data); })
+      .catch(err => { if (alive) setError(err?.response?.data?.error || 'Erro ao carregar pedido'); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [orderId]);
+
+  const itemsTotal = useMemo(() => {
+    if (!order?.items) return 0;
+    return order.items.reduce(
+      (acc, it) => acc + Number(it.unit_price || 0) * Number(it.quantity || 0), 0
+    );
+  }, [order]);
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-in fade-in"
+      onClick={onClose}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        className="bg-white rounded-[32px] w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95"
+      >
+        <div className="p-6 border-b border-gray-50 flex items-center justify-between">
+          <div>
+            <h3 className="font-black text-xl">Pedido #{orderId}</h3>
+            <p className="text-xs text-zinc-500">Detalhes completos do pedido</p>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 hover:text-black p-2 rounded-lg hover:bg-zinc-50">
+            <X size={20} />
+          </button>
+        </div>
+
+        {loading && (
+          <div className="flex-1 flex items-center justify-center py-16">
+            <RefreshCw className="animate-spin text-zinc-400" size={24} />
+          </div>
+        )}
+
+        {error && (
+          <div className="p-8 text-center">
+            <AlertCircle className="mx-auto text-red-500 mb-2" size={32} />
+            <p className="text-sm text-red-600 font-bold">{error}</p>
+          </div>
+        )}
+
+        {order && !loading && (
+          <div className="flex-1 overflow-y-auto p-6 space-y-5">
+            {/* Status + meta */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${statusBadge(order.status)}`}>
+                {order.status.replace('_', ' ')}
+              </span>
+              <span className="text-[10px] uppercase font-bold bg-zinc-100 text-zinc-600 px-2 py-1 rounded-full">
+                {order.origin || 'manual'}
+              </span>
+              <span className="text-[10px] uppercase font-bold bg-zinc-100 text-zinc-600 px-2 py-1 rounded-full">
+                {order.payment_method || '—'}
+              </span>
+              <span className="text-[11px] text-zinc-500 ml-auto flex items-center gap-1">
+                <Calendar size={12} />
+                {new Date(order.created_at).toLocaleString('pt-PT')}
+              </span>
+            </div>
+
+            {/* Cliente */}
+            <div className="bg-zinc-50 rounded-2xl p-4 space-y-1">
+              <p className="text-[10px] uppercase font-black text-zinc-500 mb-2">Cliente</p>
+              <p className="font-bold">{order.full_name || '— sem nome —'}</p>
+              {order.whatsapp_number && (
+                <p className="text-xs text-zinc-600 font-mono flex items-center gap-1.5">
+                  <Phone size={11} className="text-zinc-400" /> {order.whatsapp_number}
+                </p>
+              )}
+              {order.email && (
+                <p className="text-xs text-zinc-600 flex items-center gap-1.5">
+                  <Mail size={11} className="text-zinc-400" /> {order.email}
+                </p>
+              )}
+              {order.address && (
+                <p className="text-xs text-zinc-600 flex items-start gap-1.5">
+                  <MapPin size={11} className="text-zinc-400 mt-0.5" /> {order.address}
+                </p>
+              )}
+            </div>
+
+            {/* Items */}
+            <div>
+              <p className="text-[10px] uppercase font-black text-zinc-500 mb-2">
+                Itens ({order.items?.length || 0})
+              </p>
+              {(!order.items || order.items.length === 0) ? (
+                <p className="text-sm text-zinc-400 italic py-4 text-center bg-zinc-50 rounded-xl">
+                  Pedido sem itens registados.
+                </p>
+              ) : (
+                <div className="border border-gray-100 rounded-2xl overflow-hidden divide-y divide-gray-50">
+                  {order.items.map(it => (
+                    <div key={it.id} className="p-3 flex items-center gap-3">
+                      <Package size={16} className="text-zinc-400 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold truncate">
+                          {it.product_name || it.sku}
+                        </p>
+                        <p className="text-[10px] text-zinc-400 uppercase">
+                          {it.color || '—'} | {it.size || '—'} • <code className="font-mono">{it.sku}</code>
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-mono font-black">{it.quantity}×</p>
+                        <p className="text-[11px] text-zinc-500">€ {Number(it.unit_price || 0).toFixed(2)}</p>
+                      </div>
+                      <div className="w-20 text-right shrink-0">
+                        <p className="text-sm font-mono font-black">
+                          € {(Number(it.unit_price || 0) * Number(it.quantity || 0)).toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Totais */}
+            <div className="bg-black text-white rounded-2xl p-4 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] uppercase font-bold opacity-60">Total do pedido</p>
+                {Math.abs(Number(order.total_amount) - itemsTotal) > 0.01 && (
+                  <p className="text-[10px] text-amber-300 mt-1">
+                    ⚠ Soma dos itens (€ {itemsTotal.toFixed(2)}) difere do total declarado.
+                  </p>
+                )}
+              </div>
+              <p className="text-3xl font-black font-mono">€ {Number(order.total_amount).toFixed(2)}</p>
+            </div>
+          </div>
+        )}
+
+        <div className="p-4 border-t border-gray-50 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-5 py-2.5 rounded-xl bg-zinc-100 text-sm font-bold hover:bg-zinc-200"
+          >
+            Fechar
+          </button>
         </div>
       </div>
     </div>
