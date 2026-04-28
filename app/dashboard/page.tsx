@@ -60,7 +60,6 @@ export default function DashboardPage() {
         <header className="flex justify-between items-center mb-10">
           <div>
             <h2 className="text-3xl font-bold tracking-tight">{TAB_LABELS[activeTab] ?? activeTab}</h2>
-            <p className="text-zinc-500 text-sm">Sincronizado com o Banco PostgreSQL</p>
           </div>
           <ProfileMenu />
         </header>
