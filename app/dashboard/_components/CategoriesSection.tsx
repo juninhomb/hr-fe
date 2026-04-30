@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Plus, RefreshCw, Save, Trash2, X, Pencil, Tags, Image as ImageIcon, Upload,
 } from 'lucide-react';
-import api, { resolveImageUrl } from '../../../lib/api';
+import api, { resolveImageUrl, resolveCategoryImageUrl } from '../../../lib/api';
 
 /**
  * CRUD de Categorias para o painel de Configurações.
@@ -38,7 +38,12 @@ type FormState = {
   description: string;
   sort_order: string;
   imageFile: File | null;
+  // Preview real (blob:… ou URL absoluta para imagem já em servidor).
+  // Quando NULL → usamos o placeholder na UI, mas o flag `hasRealImage`
+  // continua a indicar se há ficheiro guardado em DB para distinguir
+  // "sem foto" (mostra Carregar) de "tem foto" (mostra Trocar / Remover).
   imagePreview: string | null;
+  hasRealImage: boolean;
   imageRemoved: boolean;
 };
 
@@ -48,6 +53,7 @@ const EMPTY_FORM: FormState = {
   sort_order: '100',
   imageFile: null,
   imagePreview: null,
+  hasRealImage: false,
   imageRemoved: false,
 };
 
@@ -84,6 +90,7 @@ export default function CategoriesSection() {
       sort_order: String(c.sort_order),
       imageFile: null,
       imagePreview: resolveImageUrl(c.image_url),
+      hasRealImage: !!c.image_url,
       imageRemoved: false,
     });
 
@@ -111,6 +118,7 @@ export default function CategoriesSection() {
       ...editing,
       imageFile: file,
       imagePreview: URL.createObjectURL(file),
+      hasRealImage: true,
       imageRemoved: false,
     });
     setError('');
@@ -125,6 +133,7 @@ export default function CategoriesSection() {
       ...editing,
       imageFile: null,
       imagePreview: null,
+      hasRealImage: false,
       imageRemoved: true,
     });
     if (fileRef.current) fileRef.current.value = '';
@@ -224,20 +233,26 @@ export default function CategoriesSection() {
       {/* Grelha visual */}
       <div className="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {categories.map((c) => {
-          const img = resolveImageUrl(c.image_url);
+          // Sempre devolve uma URL: imagem real ou o placeholder partilhado
+          // (`/uploads/categories/placeholder.svg`) que o site público também
+          // consome. Atualizar a foto aqui reflete imediatamente no site.
+          const img = resolveCategoryImageUrl(c.image_url);
           return (
             <div
               key={c.id}
               className="group relative rounded-2xl border border-black/5 bg-white overflow-hidden shadow-sm hover:shadow-md transition"
             >
               <div className="aspect-[4/3] bg-gradient-to-br from-[#F5EFE6] to-[#E9DFCD] relative">
-                {img ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={img} alt={c.name} className="absolute inset-0 h-full w-full object-cover" />
-                ) : (
-                  <div className="absolute inset-0 flex items-center justify-center text-clay-600">
-                    <ImageIcon size={28} />
-                  </div>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={img}
+                  alt={c.name}
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+                {!c.image_url && (
+                  <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/85 text-zinc-700 backdrop-blur border border-black/5">
+                    <ImageIcon size={10} /> sem foto
+                  </span>
                 )}
                 <span className="absolute top-2 left-2 inline-flex items-center text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-black/70 text-white backdrop-blur">
                   #{c.sort_order}
@@ -306,12 +321,17 @@ export default function CategoriesSection() {
                   Imagem
                 </label>
                 <div className="mt-2 flex items-center gap-4">
-                  <div className="h-24 w-32 rounded-2xl bg-gradient-to-br from-[#F5EFE6] to-[#E9DFCD] overflow-hidden flex items-center justify-center text-clay-600 shrink-0 border border-black/5">
-                    {editing.imagePreview ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={editing.imagePreview} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <ImageIcon size={20} />
+                  <div className="h-24 w-32 rounded-2xl bg-gradient-to-br from-[#F5EFE6] to-[#E9DFCD] overflow-hidden flex items-center justify-center text-clay-600 shrink-0 border border-black/5 relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={editing.imagePreview || resolveCategoryImageUrl(null)}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                    {!editing.hasRealImage && (
+                      <span className="absolute bottom-1 right-1 inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-white/85 text-zinc-700 border border-black/5">
+                        <ImageIcon size={9} /> placeholder
+                      </span>
                     )}
                   </div>
                   <div className="flex-1 space-y-2">
@@ -327,9 +347,9 @@ export default function CategoriesSection() {
                       htmlFor="category-image-input"
                       className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-full border border-black/10 hover:border-black bg-white cursor-pointer"
                     >
-                      <Upload size={12} /> {editing.imagePreview ? 'Trocar imagem' : 'Carregar imagem'}
+                      <Upload size={12} /> {editing.hasRealImage ? 'Trocar imagem' : 'Carregar imagem'}
                     </label>
-                    {editing.imagePreview && (
+                    {editing.hasRealImage && (
                       <button
                         type="button"
                         onClick={onRemoveImage}
@@ -339,7 +359,8 @@ export default function CategoriesSection() {
                       </button>
                     )}
                     <p className="text-[11px] text-zinc-500">
-                      JPG/PNG/WEBP até 5 MB. Recomenda-se proporção 4:3.
+                      JPG/PNG/WEBP até 5 MB. Recomenda-se proporção 4:3. Sem
+                      foto, o site mostra o mesmo placeholder bege.
                     </p>
                   </div>
                 </div>

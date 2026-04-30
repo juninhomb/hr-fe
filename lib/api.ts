@@ -18,6 +18,16 @@ export function resolveImageUrl(url?: string | null): string | null {
   return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 
+/**
+ * Placeholder de CATEGORIA — mesma URL usada pelo site público, garante
+ * paridade visual entre admin e site quando a categoria ainda não tem foto.
+ */
+export const CATEGORY_PLACEHOLDER_PATH = '/uploads/categories/placeholder.svg';
+
+export function resolveCategoryImageUrl(url?: string | null): string {
+  return resolveImageUrl(url) || resolveImageUrl(CATEGORY_PLACEHOLDER_PATH)!;
+}
+
 const api = axios.create({
   baseURL: `${API_BASE}/api/orders`,
 });
