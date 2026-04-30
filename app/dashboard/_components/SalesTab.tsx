@@ -7,6 +7,7 @@ import {
   MapPin, Mail, Phone,
 } from 'lucide-react';
 import api from '../../../lib/api';
+import { getDefaultShippingFeeEur } from '../../../lib/defaultShippingFee';
 
 // =============================================================
 // Tipos
@@ -61,6 +62,8 @@ type Order = {
   status: string;
   origin?: string;
   payment_method?: string;
+  is_delivery?: boolean;
+  shipping_fee?: number | string;
   created_at: string;
   items: OrderItem[];
 };
@@ -430,6 +433,14 @@ function OrdersTable({
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-1.5">
                     <span className="text-[10px] uppercase font-bold text-zinc-500">{o.origin || '—'}</span>
+                    {o.is_delivery && (
+                      <span
+                        title={`Entrega — taxa de € ${Number(o.shipping_fee || 0).toFixed(2)}`}
+                        className="text-[9px] font-black bg-emerald-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1"
+                      >
+                        <Package size={9} /> Entrega
+                      </span>
+                    )}
                     {needsShipping && (
                       <span
                         title="Pago — pronto para enviar via CTT"
@@ -575,6 +586,8 @@ function PDVPanel({
 
   const [paymentMethod, setPaymentMethod] = useState<'dinheiro' | 'mbway' | 'cartao'>('dinheiro');
   const [markAsUnpaid, setMarkAsUnpaid] = useState(false);
+  const [markAsDelivery, setMarkAsDelivery] = useState(false);
+  const [shippingFeeValue, setShippingFeeValue] = useState<number>(() => getDefaultShippingFeeEur());
   const [submitting, setSubmitting] = useState(false);
 
   const fetchVariants = async (q = search) => {
@@ -636,8 +649,12 @@ function PDVPanel({
   const removeLine = (sku: string) => setCart(prev => prev.filter(l => l.sku !== sku));
 
   const total = useMemo(
-    () => cart.reduce((acc, l) => acc + l.unit_price * l.quantity, 0),
-    [cart]
+    () => {
+      const itemsTotal = cart.reduce((acc, l) => acc + l.unit_price * l.quantity, 0);
+      const shippingFee = markAsDelivery ? shippingFeeValue : 0;
+      return itemsTotal + shippingFee;
+    },
+    [cart, markAsDelivery, shippingFeeValue]
   );
 
   const finalize = async () => {
@@ -651,6 +668,7 @@ function PDVPanel({
     }
     setSubmitting(true);
     try {
+      const shippingFee = markAsDelivery ? shippingFeeValue : 0;
       const res = await api.post('/create', {
         customer_id: selectedCustomer?.id ?? null,
         items: cart.map(l => ({ sku: l.sku, quantity: l.quantity, unit_price: l.unit_price })),
@@ -658,17 +676,22 @@ function PDVPanel({
         payment_method: paymentMethod,
         status: markAsUnpaid ? 'aguardando_pagamento' : 'pago',
         origin: 'loja_fisica',
+        is_delivery: markAsDelivery,
+        shipping_fee: shippingFee,
       });
       const wasUnpaid = markAsUnpaid;
+      const deliveryMsg = markAsDelivery ? ` + € ${shippingFeeValue.toFixed(2)} entrega` : '';
       toast(
         'success',
         wasUnpaid
-          ? `Pedido #${res.data.orderId} criado como PENDENTE — stock reservado até confirmação.`
-          : `Venda #${res.data.orderId} registada — € ${total.toFixed(2)} (stock atualizado).`
+          ? `Pedido #${res.data.orderId} criado como PENDENTE — stock reservado até confirmação.${deliveryMsg}`
+          : `Venda #${res.data.orderId} registada — € ${total.toFixed(2)}${deliveryMsg} (stock atualizado).`
       );
       setCart([]);
       setSelectedCustomer(null);
       setMarkAsUnpaid(false);
+      setMarkAsDelivery(false);
+      setShippingFeeValue(getDefaultShippingFeeEur());
       fetchVariants();
       setTimeout(() => onBack(), 800);
     } catch (err: any) {
@@ -835,8 +858,52 @@ function PDVPanel({
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-500 font-bold">Total</span>
-              <span className="text-2xl font-black font-mono">€ {total.toFixed(2)}</span>
+              <div className="text-right">
+                {markAsDelivery && (
+                  <p className="text-xs text-zinc-400 mb-1">
+                    Itens: € {(total - shippingFeeValue).toFixed(2)} + Entrega: € {shippingFeeValue.toFixed(2)}
+                  </p>
+                )}
+                <span className="text-2xl font-black font-mono">€ {total.toFixed(2)}</span>
+              </div>
             </div>
+
+            <label className={`flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer border transition ${
+              markAsDelivery ? 'bg-emerald-50 border-emerald-300' : 'bg-zinc-50 border-transparent hover:border-zinc-200'
+            }`}>
+              <input
+                type="checkbox"
+                checked={markAsDelivery}
+                onChange={e => setMarkAsDelivery(e.target.checked)}
+                className="w-4 h-4 accent-emerald-500"
+              />
+              <span className="text-xs font-bold text-zinc-700">
+                Marcar como <span className="text-emerald-600">entrega</span>
+              </span>
+              {markAsDelivery && (
+                <span className="ml-auto text-[10px] text-emerald-600 font-bold">+ € {shippingFeeValue.toFixed(2)}</span>
+              )}
+            </label>
+
+            {markAsDelivery && (
+              <div className="px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-xl">
+                <label className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-zinc-700">Valor do frete (€)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={shippingFeeValue}
+                    onChange={e => {
+                      const raw = String(e.target.value).replace(',', '.');
+                      const parsed = Number(raw);
+                      setShippingFeeValue(Math.max(0, Number.isFinite(parsed) ? parsed : 0));
+                    }}
+                    className="ml-auto w-20 px-2 py-1 rounded-lg border border-emerald-300 text-xs font-bold text-right focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </label>
+              </div>
+            )}
 
             <label className={`flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer border transition ${
               markAsUnpaid ? 'bg-amber-50 border-amber-300' : 'bg-zinc-50 border-transparent hover:border-zinc-200'
@@ -895,6 +962,9 @@ function PendingOrdersPanel({
   const [filterItems, setFilterItems] = useState<'all' | 'with' | 'without'>('all');
 
   const [completing, setCompleting] = useState<Order | null>(null);
+  /** Linha em que o painel "Inserir frete" (campo + Guardar) está aberto */
+  const [freightEditId, setFreightEditId] = useState<number | null>(null);
+  const [freightFeeDraft, setFreightFeeDraft] = useState<number>(() => getDefaultShippingFeeEur());
 
   const fetchPending = async () => {
     setLoading(true);
@@ -948,12 +1018,17 @@ function PendingOrdersPanel({
 
   const totalAmount = filtered.reduce((a, o) => a + Number(o.total_amount || 0), 0);
 
-  const confirmOrder = async (order: Order, items?: any[]) => {
+  const confirmOrder = async (order: Order, items?: any[], shippingFeeValue?: number | null) => {
     setActionId(order.id);
     try {
-      await api.post('/confirm', { orderId: order.id, items: items || undefined });
+      await api.post('/confirm', {
+        orderId: order.id,
+        items: items || undefined,
+        shipping_fee: shippingFeeValue != null ? shippingFeeValue : undefined,
+      });
       toast('success', `Pedido #${order.id} confirmado — stock atualizado.`);
       setCompleting(null);
+      setFreightEditId(prev => (prev === order.id ? null : prev));
       fetchPending();
     } catch (err: any) {
       toast('error', err?.response?.data?.error || 'Erro ao confirmar pedido');
@@ -971,9 +1046,24 @@ function PendingOrdersPanel({
         res.data?.stockRestored
           ? `Pedido #${order.id} eliminado — stock devolvido ao inventário.`
           : `Pedido #${order.id} eliminado.`);
+      setFreightEditId(prev => (prev === order.id ? null : prev));
       fetchPending();
     } catch (err: any) {
       toast('error', err?.response?.data?.error || 'Erro ao eliminar');
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const saveFreight = async (order: Order) => {
+    setActionId(order.id);
+    try {
+      await api.patch(`/${order.id}/shipping-fee`, { shipping_fee: freightFeeDraft });
+      toast('success', `Frete do pedido #${order.id} guardado — total actualizado.`);
+      setFreightEditId(null);
+      fetchPending();
+    } catch (err: any) {
+      toast('error', err?.response?.data?.error || 'Erro ao guardar frete');
     } finally {
       setActionId(null);
     }
@@ -1084,8 +1174,10 @@ function PendingOrdersPanel({
         )}
         {filtered.map(o => {
           const noItems = !o.items || o.items.length === 0;
+          const showFreightRow = (o.origin || '') === 'whatsapp' && !noItems;
           return (
-            <div key={o.id} className="p-6 flex flex-col md:flex-row gap-4 md:items-center">
+            <div key={o.id} className="p-6 flex flex-col gap-4">
+            <div className="flex flex-col md:flex-row gap-4 md:items-center">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1 flex-wrap">
                   <span className="text-xs font-black bg-zinc-100 px-2 py-0.5 rounded">#{o.id}</span>
@@ -1093,6 +1185,11 @@ function PendingOrdersPanel({
                   <span className="text-[10px] uppercase font-bold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">
                     {o.payment_method || '—'}
                   </span>
+                  {o.is_delivery && (
+                    <span className="text-[10px] uppercase font-bold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <Package size={10} /> Entrega
+                    </span>
+                  )}
                   {noItems && (
                     <span className="text-[10px] uppercase font-bold bg-red-50 text-red-700 px-2 py-0.5 rounded-full">
                       sem items
@@ -1133,6 +1230,15 @@ function PendingOrdersPanel({
                     ))}
                   </div>
                 )}
+
+                {showFreightRow && (
+                  <p className="mt-2 text-[11px] text-zinc-500">
+                    Frete: € {Number(o.shipping_fee || 0).toFixed(2)}
+                    {Number(o.shipping_fee || 0) === 0 && (
+                      <span className="text-amber-600 font-bold ml-1">— use Inserir frete</span>
+                    )}
+                  </p>
+                )}
               </div>
 
               <div className="text-right md:min-w-[120px]">
@@ -1141,7 +1247,7 @@ function PendingOrdersPanel({
                 <p className="text-[10px] text-zinc-400 mt-1">{new Date(o.created_at).toLocaleString('pt-PT')}</p>
               </div>
 
-              <div className="flex gap-2 shrink-0">
+              <div className="flex gap-2 shrink-0 flex-wrap md:justify-end">
                 {noItems ? (
                   <button
                     onClick={() => setCompleting(o)}
@@ -1151,15 +1257,40 @@ function PendingOrdersPanel({
                     Adicionar Itens
                   </button>
                 ) : (
-                  <button
-                    onClick={() => confirmOrder(o)}
-                    disabled={actionId === o.id}
-                    className="px-4 py-2 rounded-xl bg-emerald-500 text-white text-xs font-bold hover:bg-emerald-600 transition disabled:opacity-40 flex items-center gap-1"
-                  >
-                    <Check size={13} /> Confirmar
-                  </button>
+                  <>
+                    {showFreightRow && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (freightEditId === o.id) {
+                            setFreightEditId(null);
+                          } else {
+                            setFreightEditId(o.id);
+                            setFreightFeeDraft(
+                              Number.isFinite(Number(o.shipping_fee)) && Number(o.shipping_fee) > 0
+                                ? Number(o.shipping_fee)
+                                : getDefaultShippingFeeEur()
+                            );
+                          }
+                        }}
+                        disabled={actionId === o.id}
+                        className="px-4 py-2 rounded-xl bg-sky-600 text-white text-xs font-bold hover:bg-sky-700 transition disabled:opacity-40"
+                      >
+                        {freightEditId === o.id ? 'Fechar' : 'Inserir frete'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => confirmOrder(o)}
+                      disabled={actionId === o.id}
+                      className="px-4 py-2 rounded-xl bg-emerald-500 text-white text-xs font-bold hover:bg-emerald-600 transition disabled:opacity-40 flex items-center gap-1"
+                    >
+                      <Check size={13} /> Confirmar
+                    </button>
+                  </>
                 )}
                 <button
+                  type="button"
                   onClick={() => cancelOrder(o)}
                   disabled={actionId === o.id}
                   className="px-4 py-2 rounded-xl bg-red-50 text-red-600 text-xs font-bold hover:bg-red-100 transition disabled:opacity-40 flex items-center gap-1"
@@ -1167,6 +1298,64 @@ function PendingOrdersPanel({
                   <Trash2 size={13} /> Excluir
                 </button>
               </div>
+            </div>
+
+            {showFreightRow && freightEditId === o.id && (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-3">
+                <div className="flex-1 min-w-[180px]">
+                  <label className="block text-[10px] uppercase font-bold text-zinc-600 mb-1">Valor do frete (€)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={freightFeeDraft}
+                    onChange={e => {
+                      const raw = String(e.target.value).replace(',', '.');
+                      const parsed = Number(raw);
+                      setFreightFeeDraft(Math.max(0, Number.isFinite(parsed) ? parsed : 0));
+                    }}
+                    className="w-full max-w-[140px] px-3 py-2 rounded-lg border border-emerald-300 text-sm font-bold text-right focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div className="text-xs text-zinc-600 pb-1 sm:flex-1">
+                  <span className="font-mono">
+                    Itens: €{' '}
+                    {(o.items || []).reduce(
+                      (s, it) => s + Number(it.unit_price || 0) * Number(it.quantity || 0),
+                      0
+                    ).toFixed(2)}{' '}
+                    + Frete: € {freightFeeDraft.toFixed(2)} ={' '}
+                    <strong className="text-zinc-900">
+                      €{' '}
+                      {(
+                        (o.items || []).reduce(
+                          (s, it) => s + Number(it.unit_price || 0) * Number(it.quantity || 0),
+                          0
+                        ) + freightFeeDraft
+                      ).toFixed(2)}
+                    </strong>
+                  </span>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setFreightEditId(null)}
+                    disabled={actionId === o.id}
+                    className="px-4 py-2 rounded-xl bg-zinc-200 text-zinc-800 text-xs font-bold hover:bg-zinc-300 transition disabled:opacity-40"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => saveFreight(o)}
+                    disabled={actionId === o.id}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition disabled:opacity-40"
+                  >
+                    {actionId === o.id ? 'A guardar...' : 'Guardar frete'}
+                  </button>
+                </div>
+              </div>
+            )}
             </div>
           );
         })}
@@ -1180,6 +1369,7 @@ function PendingOrdersPanel({
           isSubmitting={actionId === completing.id}
         />
       )}
+
     </div>
   );
 }
@@ -1520,6 +1710,11 @@ function OrderDetailsModal({
               <span className="text-[10px] uppercase font-bold bg-zinc-100 text-zinc-600 px-2 py-1 rounded-full">
                 {order.payment_method || '—'}
               </span>
+              {order.is_delivery && (
+                <span className="text-[10px] uppercase font-black bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full flex items-center gap-1">
+                  <Package size={10} /> Entrega
+                </span>
+              )}
               <span className="text-[11px] text-zinc-500 ml-auto flex items-center gap-1">
                 <Calendar size={12} />
                 {new Date(order.created_at).toLocaleString('pt-PT')}
@@ -1585,16 +1780,32 @@ function OrderDetailsModal({
             </div>
 
             {/* Totais */}
-            <div className="bg-black text-white rounded-2xl p-4 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] uppercase font-bold opacity-60">Total do pedido</p>
-                {Math.abs(Number(order.total_amount) - itemsTotal) > 0.01 && (
-                  <p className="text-[10px] text-amber-300 mt-1">
-                    ⚠ Soma dos itens (€ {itemsTotal.toFixed(2)}) difere do total declarado.
-                  </p>
-                )}
+            <div className="bg-black text-white rounded-2xl p-4 space-y-2">
+              <div className="flex items-center justify-between pb-2 border-b border-white/20">
+                <p className="text-[10px] uppercase font-bold opacity-60">Subtotal (itens)</p>
+                <p className="text-sm font-mono">€ {itemsTotal.toFixed(2)}</p>
               </div>
-              <p className="text-3xl font-black font-mono">€ {Number(order.total_amount).toFixed(2)}</p>
+              
+              {order.is_delivery && Number(order.shipping_fee || 0) > 0 && (
+                <div className="flex items-center justify-between pb-2 border-b border-white/20">
+                  <div className="flex items-center gap-2">
+                    <p className="text-[10px] uppercase font-bold opacity-60">Taxa de entrega</p>
+                    <span className="text-[8px] bg-emerald-500 text-white px-2 py-0.5 rounded-full">Entrega</span>
+                  </div>
+                  <p className="text-sm font-mono">€ {Number(order.shipping_fee || 0).toFixed(2)}</p>
+                </div>
+              )}
+              
+              <div className="flex items-center justify-between pt-1">
+                <p className="text-[10px] uppercase font-bold opacity-60">Total do pedido</p>
+                <p className="text-3xl font-black font-mono">€ {Number(order.total_amount).toFixed(2)}</p>
+              </div>
+
+              {Math.abs(Number(order.total_amount) - itemsTotal - Number(order.shipping_fee || 0)) > 0.01 && (
+                <p className="text-[10px] text-amber-300 mt-2 pt-2 border-t border-amber-400/30">
+                  ⚠ Soma (itens + entrega) difere do total declarado.
+                </p>
+              )}
             </div>
           </div>
         )}
