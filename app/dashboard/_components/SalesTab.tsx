@@ -68,6 +68,11 @@ type Order = {
   items: OrderItem[];
 };
 
+/** Pedido criado no site com opção levantamento na loja (explícito no checkout). */
+function isWebsiteStorePickup(o: Pick<Order, 'origin' | 'is_delivery'>): boolean {
+  return (o.origin || '') === 'website' && !o.is_delivery;
+}
+
 // =============================================================
 // Toast helper
 // =============================================================
@@ -439,6 +444,14 @@ function OrdersTable({
                         className="text-[9px] font-black bg-emerald-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1"
                       >
                         <Package size={9} /> Entrega
+                      </span>
+                    )}
+                    {isWebsiteStorePickup(o) && (
+                      <span
+                        title="Levantamento na loja — cliente recolhe em loja (sem envio)"
+                        className="text-[9px] font-black bg-violet-600 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1"
+                      >
+                        <Store size={9} /> Na loja
                       </span>
                     )}
                     {needsShipping && (
@@ -1190,6 +1203,14 @@ function PendingOrdersPanel({
                       <Package size={10} /> Entrega
                     </span>
                   )}
+                  {isWebsiteStorePickup(o) && (
+                    <span
+                      title="Levantamento na loja"
+                      className="text-[10px] uppercase font-bold bg-violet-50 text-violet-800 px-2 py-0.5 rounded-full flex items-center gap-1"
+                    >
+                      <Store size={10} /> Na loja
+                    </span>
+                  )}
                   {noItems && (
                     <span className="text-[10px] uppercase font-bold bg-red-50 text-red-700 px-2 py-0.5 rounded-full">
                       sem items
@@ -1715,6 +1736,14 @@ function OrderDetailsModal({
                   <Package size={10} /> Entrega
                 </span>
               )}
+              {isWebsiteStorePickup(order) && (
+                <span
+                  title="Levantamento na loja"
+                  className="text-[10px] uppercase font-black bg-violet-100 text-violet-800 px-2 py-1 rounded-full flex items-center gap-1"
+                >
+                  <Store size={10} /> Na loja
+                </span>
+              )}
               <span className="text-[11px] text-zinc-500 ml-auto flex items-center gap-1">
                 <Calendar size={12} />
                 {new Date(order.created_at).toLocaleString('pt-PT')}
@@ -1793,6 +1822,16 @@ function OrderDetailsModal({
                     <span className="text-[8px] bg-emerald-500 text-white px-2 py-0.5 rounded-full">Entrega</span>
                   </div>
                   <p className="text-sm font-mono">€ {Number(order.shipping_fee || 0).toFixed(2)}</p>
+                </div>
+              )}
+
+              {isWebsiteStorePickup(order) && (
+                <div className="flex items-center justify-between pb-2 border-b border-white/20">
+                  <div className="flex items-center gap-2">
+                    <p className="text-[10px] uppercase font-bold opacity-60">Forma de entrega</p>
+                    <span className="text-[8px] bg-violet-500 text-white px-2 py-0.5 rounded-full">Na loja</span>
+                  </div>
+                  <p className="text-sm font-mono opacity-80">—</p>
                 </div>
               )}
               

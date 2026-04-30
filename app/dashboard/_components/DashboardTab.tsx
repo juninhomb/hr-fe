@@ -33,6 +33,7 @@ type DashboardStats = {
   recent_pending: {
     id: number; total_amount: number; origin: string;
     created_at: string; full_name?: string; whatsapp_number?: string;
+    is_delivery?: boolean;
   }[];
   top_customers: {
     id: number; full_name?: string; whatsapp_number?: string;
@@ -592,23 +593,31 @@ function PendingList({ data }: { data: DashboardStats['recent_pending'] }) {
   }
   return (
     <div className="space-y-2">
-      {data.map(p => (
-        <div key={p.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-zinc-50 transition">
-          <span className="text-[10px] font-mono font-black bg-zinc-100 px-2 py-1 rounded shrink-0">
-            #{p.id}
-          </span>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold truncate">{p.full_name || 'Sem nome'}</p>
-            <p className="text-[10px] text-zinc-500 flex items-center gap-1 truncate">
-              <Phone size={9} /> {p.whatsapp_number || '—'} · {p.origin}
-            </p>
+      {data.map(p => {
+        const storePickup = (p.origin || '') === 'website' && !p.is_delivery;
+        return (
+          <div key={p.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-zinc-50 transition">
+            <span className="text-[10px] font-mono font-black bg-zinc-100 px-2 py-1 rounded shrink-0">
+              #{p.id}
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold truncate">{p.full_name || 'Sem nome'}</p>
+              <p className="text-[10px] text-zinc-500 flex flex-wrap items-center gap-1">
+                <Phone size={9} /> <span className="truncate">{p.whatsapp_number || '—'} · {p.origin}</span>
+                {storePickup && (
+                  <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase bg-violet-100 text-violet-800 px-1.5 py-0.5 rounded-full shrink-0">
+                    <Store size={9} /> Na loja
+                  </span>
+                )}
+              </p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="text-sm font-mono font-black">€ {Number(p.total_amount).toFixed(2)}</p>
+              <p className="text-[10px] text-zinc-500">{new Date(p.created_at).toLocaleDateString('pt-PT')}</p>
+            </div>
           </div>
-          <div className="text-right shrink-0">
-            <p className="text-sm font-mono font-black">€ {Number(p.total_amount).toFixed(2)}</p>
-            <p className="text-[10px] text-zinc-500">{new Date(p.created_at).toLocaleDateString('pt-PT')}</p>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
