@@ -3,9 +3,20 @@ import axios from 'axios';
 // Base URL do backend.
 // - Em dev: http://localhost:3001 (ou definir NEXT_PUBLIC_API_URL=...)
 // - Em prod: NEXT_PUBLIC_API_URL=https://api.hrstorept.com
-const API_BASE =
+export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ||
   'http://localhost:3001';
+
+/**
+ * Resolve a URL de uma imagem servida pelo backend.
+ * Aceita tanto caminhos relativos (`/uploads/products/foo.jpg`) como
+ * URLs já absolutas (mantidas como estão).
+ */
+export function resolveImageUrl(url?: string | null): string | null {
+  if (!url) return null;
+  if (/^https?:\/\//i.test(url)) return url;
+  return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+}
 
 const api = axios.create({
   baseURL: `${API_BASE}/api/orders`,

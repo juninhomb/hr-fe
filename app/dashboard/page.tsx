@@ -1,10 +1,11 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, Package, ShoppingCart, Users } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingCart, Users, Settings } from 'lucide-react';
 import DashboardTab from './_components/DashboardTab';
 import InventoryTab from './_components/InventoryTab';
 import CustomersTab from './_components/CustomersTab';
 import SalesTab from './_components/SalesTab';
+import SettingsTab from './_components/SettingsTab';
 import ProfileMenu from './_components/ProfileMenu';
 
 const NAV_ITEMS = [
@@ -12,6 +13,7 @@ const NAV_ITEMS = [
   { id: 'inventory', icon: Package, label: 'Inventário' },
   { id: 'sales', icon: ShoppingCart, label: 'Vendas & PDV' },
   { id: 'customers', icon: Users, label: 'Clientes' },
+  { id: 'settings', icon: Settings, label: 'Configurações' },
 ];
 
 const TAB_LABELS: Record<string, string> = {
@@ -19,6 +21,7 @@ const TAB_LABELS: Record<string, string> = {
   inventory: 'Inventário',
   sales: 'Vendas & PDV',
   customers: 'Clientes',
+  settings: 'Configurações',
 };
 
 export default function DashboardPage() {
@@ -68,6 +71,7 @@ export default function DashboardPage() {
         {activeTab === 'inventory' && <InventoryTab />}
         {activeTab === 'sales' && <SalesTab />}
         {activeTab === 'customers' && <CustomersTab />}
+        {activeTab === 'settings' && <SettingsTab />}
       </main>
     </div>
   );
