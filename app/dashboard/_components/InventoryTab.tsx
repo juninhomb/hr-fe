@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Search, MoreHorizontal, Pencil, Trash2, RefreshCw, X,
   Layers, Package, Boxes, Euro, Image as ImageIcon, Upload, Sparkles,
-  Star,
+  Star, Eye, EyeOff,
 } from 'lucide-react';
 import api, { resolveImageUrl } from '../../../lib/api';
 import { suggestCategoryId } from '../../../lib/categorySuggester';
@@ -55,6 +55,7 @@ export default function InventoryTab() {
   const [deletingProduct, setDeletingProduct] = useState<any>(null);
   const [deleteError, setDeleteError] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [visibilityBusySku, setVisibilityBusySku] = useState<string | null>(null);
 
   const fetchProducts = async (q = search) => {
     setLoading(true);
@@ -282,6 +283,7 @@ export default function InventoryTab() {
             size: form.size.trim() || null,
             stock_quantity: parseInt(form.stock_quantity) || 0,
             category_id: form.category_id ? parseInt(form.category_id, 10) : null,
+            variant_is_active: true,
           });
           productId = res.data?.product_id ?? null;
         } else {
@@ -296,6 +298,7 @@ export default function InventoryTab() {
             color: form.color.trim() || null,
             size: form.size.trim() || null,
             stock_quantity: parseInt(form.stock_quantity) || 0,
+            is_active: true,
           });
           newVariantId = res.data?.id ?? null;
           // Se houver imagem, faz upload logo após criar
@@ -396,6 +399,20 @@ export default function InventoryTab() {
     }
   };
 
+  const toggleVariantStoreVisibility = async (item: any) => {
+    if (!item?.sku || visibilityBusySku === item.sku) return;
+    const currentlyVisible = item.variant_is_active !== false;
+    setVisibilityBusySku(item.sku);
+    try {
+      await api.put(`/products/${item.sku}`, { variant_is_active: !currentlyVisible });
+      await fetchProducts();
+    } catch (err) {
+      console.error('Erro a alterar visibilidade na loja:', err);
+    } finally {
+      setVisibilityBusySku(null);
+    }
+  };
+
   return (
     <>
       {/* Cards de totais (estilo Dashboard) */}
@@ -460,12 +477,14 @@ export default function InventoryTab() {
                 <th className="px-6 py-5 text-black">SKU</th>
                 <th className="px-6 py-5 text-black text-right">Preço</th>
                 <th className="px-6 py-5 text-black text-center">Stock</th>
+                <th className="px-6 py-5 text-black text-center">Visível</th>
                 <th className="px-6 py-5 text-black text-center">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {products.map((item) => {
                 const imgFull = resolveImageUrl(item.image_url);
+                const isVisibleOnStore = item.variant_is_active !== false;
                 return (
                   <tr key={item.id} className="hover:bg-gray-50/30 transition group">
                     <td className="px-6 py-4">
@@ -480,7 +499,7 @@ export default function InventoryTab() {
                     </td>
                     <td className="px-6 py-5">
                       <div className="flex flex-col">
-                        <span className="font-bold text-sm text-black inline-flex items-center gap-1.5">
+                        <span className="font-bold text-sm text-black inline-flex items-center gap-1.5 flex-wrap">
                           {item.name || 'Produto Base'}
                           {item.is_featured && (
                             <span
@@ -518,6 +537,18 @@ export default function InventoryTab() {
                         {item.stock} UN.
                       </span>
                     </td>
+                    <td className="px-6 py-5 text-center">
+                      <span
+                        title={isVisibleOnStore ? 'Visível na loja' : 'Oculto na loja'}
+                        className={`inline-flex items-center justify-center min-w-[2.5rem] px-3 py-1.5 rounded-full text-[11px] font-black ${
+                          isVisibleOnStore
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-zinc-100 text-zinc-500 border border-zinc-200'
+                        }`}
+                      >
+                        {visibilityBusySku === item.sku ? '…' : isVisibleOnStore ? 'Sim' : 'Não'}
+                      </span>
+                    </td>
                     <td className="px-6 py-5 text-center text-zinc-300">
                       <div className="flex justify-center">
                         <button
@@ -540,7 +571,7 @@ export default function InventoryTab() {
               })}
               {products.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={7} className="px-8 py-16 text-center text-zinc-400 text-sm">
+                  <td colSpan={8} className="px-8 py-16 text-center text-zinc-400 text-sm">
                     Nenhum produto encontrado.
                   </td>
                 </tr>
@@ -563,6 +594,7 @@ export default function InventoryTab() {
                     </span>
                   </td>
                   <td className="px-6 py-5"></td>
+                  <td className="px-6 py-5"></td>
                 </tr>
               </tfoot>
             )}
@@ -575,10 +607,13 @@ export default function InventoryTab() {
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpenMenu(null)} />
           <div
-            className="fixed z-20 bg-white border border-gray-100 rounded-2xl shadow-xl py-1 w-48 overflow-hidden"
+            className="fixed z-20 bg-white border border-gray-100 rounded-2xl shadow-xl py-1 min-w-[11.5rem] overflow-hidden"
             style={{ top: openMenu.top, right: openMenu.right }}
           >
-            {products.filter(p => p.sku === openMenu.id).map(item => (
+            {products.filter(p => p.sku === openMenu.id).map(item => {
+              const visibleInStore = item.variant_is_active !== false;
+              const visibilityBusyForRow = visibilityBusySku === item.sku;
+              return (
               <React.Fragment key={item.sku}>
                 <button
                   onClick={() => { openEditModal(item); setOpenMenu(null); }}
@@ -602,6 +637,17 @@ export default function InventoryTab() {
                   <span>{item.is_featured ? 'Remover destaque' : 'Marcar destaque'}</span>
                 </button>
                 <button
+                  type="button"
+                  onClick={() => { void toggleVariantStoreVisibility(item); setOpenMenu(null); }}
+                  disabled={visibilityBusyForRow}
+                  className={`w-full flex items-center space-x-2 px-4 py-2.5 text-sm transition text-left disabled:opacity-50 ${
+                    visibleInStore ? 'text-zinc-700 hover:bg-zinc-50' : 'text-emerald-700 hover:bg-emerald-50'
+                  }`}
+                >
+                  {visibleInStore ? <EyeOff size={14} /> : <Eye size={14} />}
+                  <span>{visibleInStore ? 'Ocultar da loja' : 'Mostrar na loja'}</span>
+                </button>
+                <button
                   onClick={() => { setDeletingProduct(item); setOpenMenu(null); }}
                   className="w-full flex items-center space-x-2 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition text-left"
                 >
@@ -609,7 +655,8 @@ export default function InventoryTab() {
                   <span>Eliminar</span>
                 </button>
               </React.Fragment>
-            ))}
+              );
+            })}
           </div>
         </>
       )}
