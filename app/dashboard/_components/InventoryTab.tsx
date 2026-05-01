@@ -41,7 +41,7 @@ export default function InventoryTab() {
   const [productImageRemoved, setProductImageRemoved] = useState(false);
   const productFileRef = useRef<HTMLInputElement | null>(null);
 
-  // Imagem específica desta VARIANTE (override; só visível em edit)
+  // Imagem específica desta VARIANTE (override; agora também na criação)
   const [variantImageFile, setVariantImageFile] = useState<File | null>(null);
   const [variantImagePreview, setVariantImagePreview] = useState<string | null>(null);
   const [variantImageRemoved, setVariantImageRemoved] = useState(false);
@@ -83,6 +83,22 @@ export default function InventoryTab() {
     const timer = setTimeout(() => fetchProducts(search), 350);
     return () => clearTimeout(timer);
   }, [search]);
+
+  // Cleanup de blob URLs no unmount — evita leak quando o admin troca de
+  // separador / faz logout / fecha browser com modal aberto.
+  // Usamos refs para captar sempre o último valor sem retriggerar o effect.
+  const productPreviewRef = useRef<string | null>(null);
+  const variantPreviewRef = useRef<string | null>(null);
+  useEffect(() => { productPreviewRef.current = productImagePreview; }, [productImagePreview]);
+  useEffect(() => { variantPreviewRef.current = variantImagePreview; }, [variantImagePreview]);
+  useEffect(() => {
+    return () => {
+      const p = productPreviewRef.current;
+      const v = variantPreviewRef.current;
+      if (p && p.startsWith('blob:')) URL.revokeObjectURL(p);
+      if (v && v.startsWith('blob:')) URL.revokeObjectURL(v);
+    };
+  }, []);
 
   // Sugestão automática de categoria pelo prefixo do nome (só na criação
   // de novo produto e enquanto o admin não tenha tocado no select).
@@ -254,6 +270,7 @@ export default function InventoryTab() {
     setSaving(true);
     try {
       let productId: number | null = null;
+      let newVariantId: number | null = null;
 
       if (modalMode === 'create') {
         if (createMode === 'new_product') {
@@ -273,13 +290,32 @@ export default function InventoryTab() {
             setSaving(false);
             return;
           }
-          await api.post(`/products/${form.product_id}/variants`, {
+          // Cria a variante
+          const res = await api.post(`/products/${form.product_id}/variants`, {
             sku: form.sku.trim().toUpperCase(),
             color: form.color.trim() || null,
             size: form.size.trim() || null,
             stock_quantity: parseInt(form.stock_quantity) || 0,
           });
-          // Adicionar variante NÃO mexe na imagem nem na categoria — terminou aqui.
+          newVariantId = res.data?.id ?? null;
+          // Se houver imagem, faz upload logo após criar
+          if (newVariantId && variantImageFile) {
+            const fd = new FormData();
+            fd.append('image', variantImageFile);
+            if (variantApplyToColor) fd.append('applyToColor', 'true');
+            try {
+              await api.post(`/variants/${newVariantId}/image`, fd, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+              });
+            } catch (imgErr: any) {
+              setFormError(
+                imgErr?.response?.data?.error || 'Variante criada, mas falhou o upload da imagem.'
+              );
+              setSaving(false);
+              fetchProducts();
+              return;
+            }
+          }
         }
       } else {
         await api.put(`/products/${editingProduct.sku}`, {
@@ -706,12 +742,42 @@ export default function InventoryTab() {
                 </div>
               )}
 
-              {/* Atalho criar+upload imagem para o PRODUTO-base no modo "novo produto" */}
+              {/* Upload de imagem da variante já na criação */}
               {modalMode === 'create' && createMode === 'new_variant' && (
-                <p className="text-[10px] text-zinc-500 bg-zinc-50 rounded-xl px-3 py-2">
-                  💡 Para definir foto específica desta variante, primeiro cria-a e depois usa
-                  <strong> Editar</strong> na tabela.
-                </p>
+                <div className="rounded-2xl bg-amber-50/40 border border-amber-200/60 p-4 space-y-3">
+                  <ImageZone
+                    title={`Imagem desta variante (${form.color || '—'} · ${form.size || '—'})`}
+                    hint={
+                      variantImagePreview
+                        ? 'Esta foto sobrepõe-se à do produto-base só para esta variante.'
+                        : 'Sem foto própria → usa a foto do produto.'
+                    }
+                    preview={variantImagePreview}
+                    inputRef={variantFileRef}
+                    inputId="variant-image-input"
+                    accent="amber"
+                    handlers={makeImageHandlers(
+                      variantImageFile, setVariantImageFile,
+                      variantImagePreview, setVariantImagePreview,
+                      setVariantImageRemoved, variantFileRef
+                    )}
+                  />
+                  {/* Aplicar a todas as variantes da mesma cor (atalho útil) */}
+                  {variantImageFile && form.color && (
+                    <label className="flex items-start gap-2 cursor-pointer text-[11px] text-amber-900">
+                      <input
+                        type="checkbox"
+                        checked={variantApplyToColor}
+                        onChange={e => setVariantApplyToColor(e.target.checked)}
+                        className="accent-amber-600 mt-0.5"
+                      />
+                      <span>
+                        <strong>Aplicar a todas as variantes da cor &quot;{form.color}&quot;</strong> deste
+                        produto (útil porque tipicamente foto varia por cor, não por tamanho).
+                      </span>
+                    </label>
+                  )}
+                </div>
               )}
 
               {/* Nome + preço (só para novo produto ou edit) */}

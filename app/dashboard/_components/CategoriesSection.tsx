@@ -81,6 +81,16 @@ export default function CategoriesSection() {
 
   useEffect(() => { fetchCategories(); }, []);
 
+  // Cleanup blob URL no unmount (modal aberto + tab change/logout).
+  const editingRef = useRef<FormState | null>(null);
+  useEffect(() => { editingRef.current = editing; }, [editing]);
+  useEffect(() => {
+    return () => {
+      const p = editingRef.current?.imagePreview;
+      if (p && p.startsWith('blob:')) URL.revokeObjectURL(p);
+    };
+  }, []);
+
   const startCreate = () => setEditing({ ...EMPTY_FORM });
   const startEdit = (c: Category) =>
     setEditing({

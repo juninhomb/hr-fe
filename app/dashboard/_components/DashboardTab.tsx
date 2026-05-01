@@ -47,14 +47,21 @@ type DashboardStats = {
 export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string) => void }) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchStats = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await api.get('/dashboard/stats');
       setStats(res.data);
     } catch (err) {
       console.error('Erro ao carregar stats:', err);
+      const msg = (err as { response?: { data?: { error?: string } }; message?: string })
+        ?.response?.data?.error
+        || (err as { message?: string })?.message
+        || 'Não foi possível carregar as estatísticas. Verifica a ligação ao servidor.';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -77,6 +84,25 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
           <RefreshCw size={18} />
         </button>
       </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start gap-3 bg-red-50 border border-red-200 text-red-800 rounded-2xl px-4 py-3"
+        >
+          <AlertCircle size={18} className="mt-0.5 shrink-0" />
+          <div className="flex-1 text-sm">
+            <p className="font-bold">Falha ao carregar o dashboard</p>
+            <p className="text-xs opacity-80">{error}</p>
+          </div>
+          <button
+            onClick={fetchStats}
+            className="text-xs font-bold px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+          >
+            Tentar de novo
+          </button>
+        </div>
+      )}
 
       {/* KPI cards (clicáveis) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">

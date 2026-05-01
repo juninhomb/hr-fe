@@ -323,10 +323,59 @@ function OverviewPanel({
       </div>
 
       {detailsId !== null && (
-        <OrderDetailsModal orderId={detailsId} onClose={() => setDetailsId(null)} />
+        <ModalErrorBoundary onClose={() => setDetailsId(null)} label={`Pedido #${detailsId}`}>
+          <OrderDetailsModal orderId={detailsId} onClose={() => setDetailsId(null)} />
+        </ModalErrorBoundary>
       )}
     </div>
   );
+}
+
+// =============================================================
+// ModalErrorBoundary — protege modais (ex. OrderDetailsModal) de
+// dados malformados vindos da API. Se algum render filho fizer throw,
+// mostra fallback isolado em vez de crashar a app inteira.
+// =============================================================
+class ModalErrorBoundary extends React.Component<
+  { children: React.ReactNode; onClose: () => void; label?: string },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('[ModalErrorBoundary]', this.props.label || '', error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={this.props.onClose}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="bg-white rounded-[28px] w-full max-w-md p-6 text-center"
+          >
+            <AlertCircle className="mx-auto text-red-500 mb-3" size={36} />
+            <h3 className="font-black text-lg mb-1">Não foi possível mostrar este conteúdo</h3>
+            <p className="text-xs text-zinc-500 mb-1">
+              Houve um erro a renderizar o pedido. Os dados podem estar corrompidos ou incompletos.
+            </p>
+            <p className="text-[10px] text-zinc-400 font-mono mb-4 break-all">
+              {String(this.state.error?.message || this.state.error)}
+            </p>
+            <button
+              onClick={this.props.onClose}
+              className="px-5 py-2.5 bg-black text-white rounded-xl text-sm font-bold hover:bg-zinc-800"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function KpiCard({
@@ -671,6 +720,7 @@ function PDVPanel({
   );
 
   const finalize = async () => {
+    if (submitting) return; // guard explícito contra duplo-click race
     if (cart.length === 0) {
       toast('error', 'Carrinho vazio.');
       return;
