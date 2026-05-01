@@ -4,7 +4,7 @@ import {
   Search, Plus, Minus, Trash2, ShoppingCart, RefreshCw, Check, X,
   Clock, MessageCircle, Store, AlertCircle, Package, ArrowLeft,
   TrendingUp, Euro, Calendar, Filter, Eye, MoreHorizontal, Send,
-  MapPin, Mail, Phone,
+  MapPin, Mail, Phone, StickyNote,
 } from 'lucide-react';
 import api from '../../../lib/api';
 import { getDefaultShippingFeeEur } from '../../../lib/defaultShippingFee';
@@ -65,6 +65,8 @@ type Order = {
   is_delivery?: boolean;
   shipping_fee?: number | string;
   created_at: string;
+  /** Notas opcionais deixadas pelo cliente no checkout do site. */
+  customer_notes?: string | null;
   items: OrderItem[];
 };
 
@@ -1818,6 +1820,14 @@ function OrderDetailsModal({
                 <p className="text-xs text-zinc-600 flex items-start gap-1.5">
                   <MapPin size={11} className="text-zinc-400 mt-0.5" /> {order.address}
                 </p>
+              )}
+              {order.customer_notes?.trim() && (
+                <div className="mt-2 pt-2 border-t border-zinc-200">
+                  <p className="text-[10px] uppercase font-black text-zinc-500 mb-1 flex items-center gap-1">
+                    <StickyNote size={11} className="text-zinc-400" /> Notas do cliente
+                  </p>
+                  <p className="text-xs text-zinc-700 whitespace-pre-wrap">{order.customer_notes.trim()}</p>
+                </div>
               )}
             </div>
 
