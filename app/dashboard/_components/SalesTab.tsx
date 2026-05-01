@@ -1274,6 +1274,17 @@ function PendingOrdersPanel({
                   <Phone size={11} /> {o.whatsapp_number || '—'}
                 </p>
 
+                {o.customer_notes?.trim() && (
+                  <div className="mt-2 p-2 rounded-lg bg-amber-50/90 border border-amber-100">
+                    <p className="text-[10px] uppercase font-black text-amber-900 flex items-center gap-1">
+                      <StickyNote size={10} /> Notas do cliente (checkout)
+                    </p>
+                    <p className="text-[11px] text-zinc-800 whitespace-pre-wrap mt-1 leading-snug">
+                      {o.customer_notes.trim()}
+                    </p>
+                  </div>
+                )}
+
                 {/* Bloco de envio CTT (só quando origem = whatsapp) */}
                 {o.origin === 'whatsapp' && (
                   <div className="mt-2 p-2 rounded-lg bg-blue-50/50 border border-blue-100 space-y-1">
@@ -1725,7 +1736,17 @@ function OrderDetailsModal({
     let alive = true;
     setLoading(true);
     api.get(`/${orderId}`)
-      .then(res => { if (alive) setOrder(res.data); })
+      .then((res) => {
+        if (!alive) return;
+        const d = res.data as Order & { customer_notes?: string | null };
+        setOrder({
+          ...d,
+          customer_notes:
+            d.customer_notes != null && String(d.customer_notes).trim() !== ''
+              ? String(d.customer_notes).trim()
+              : null,
+        });
+      })
       .catch(err => { if (alive) setError(err?.response?.data?.error || 'Erro ao carregar pedido'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
