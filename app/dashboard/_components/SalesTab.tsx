@@ -4,7 +4,7 @@ import {
   Search, Plus, Minus, Trash2, ShoppingCart, RefreshCw, Check, X,
   Clock, MessageCircle, Store, AlertCircle, Package, ArrowLeft,
   TrendingUp, Euro, Calendar, Filter, Eye, MoreHorizontal, Send,
-  MapPin, Mail, Phone, StickyNote,
+  MapPin, Mail, Phone, StickyNote, PackageCheck, CheckCircle2,
 } from 'lucide-react';
 import api from '../../../lib/api';
 import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
@@ -63,17 +63,28 @@ type Order = {
   status: string;
   origin?: string;
   payment_method?: string;
-  is_delivery?: boolean;
+  /** API pode vir como boolean, "true"/"1", etc. */
+  is_delivery?: boolean | number | string;
   shipping_fee?: number | string;
   created_at: string;
   /** Notas opcionais deixadas pelo cliente no checkout do site. */
   customer_notes?: string | null;
   items: OrderItem[];
+  /** Data/hora em que se enviou o email de levantamento na loja (API). */
+  pickup_ready_notified_at?: string | null;
+  /** Data/hora em que o cliente levantou na loja (backoffice → entregue). */
+  pickup_collected_at?: string | null;
 };
 
-/** Pedido criado no site com opção levantamento na loja (explícito no checkout). */
+/** Site + recolha em loja (sem envio ao domicílio). */
 function isWebsiteStorePickup(o: Pick<Order, 'origin' | 'is_delivery'>): boolean {
-  return (o.origin || '') === 'website' && !o.is_delivery;
+  const orig = String(o.origin || '').trim().toLowerCase();
+  const del =
+    o.is_delivery === true
+    || o.is_delivery === 'true'
+    || o.is_delivery === 1
+    || o.is_delivery === '1';
+  return orig === 'website' && !del;
 }
 
 // =============================================================
@@ -159,7 +170,39 @@ function OverviewPanel({
     }
   };
 
+  const handlePickupCollected = async (o: Order) => {
+    const msgPrimary = `Confirmar que o cliente já levantou o pedido #${o.id} na loja? O estado passará para «entregue».`;
+    const msgWarn = `Ainda não foi enviado o email ao cliente sobre disponibilidade para levantar. Confirmar mesmo que #${o.id} foi entregue na loja ao cliente?`;
+    if (!window.confirm(o.pickup_ready_notified_at ? msgPrimary : msgWarn)) return;
+    if (actionId) return;
+    setActionId(o.id);
+    try {
+      await api.post(`/${o.id}/pickup-collected`);
+      toast('success', `Pedido #${o.id} marcado como entregue.`);
+      await fetchAll();
+    } catch (err: any) {
+      toast('error', err?.response?.data?.error || 'Erro ao confirmar levantamento');
+      throw err;
+    } finally {
+      setActionId(null);
+    }
+  };
+
   useEffect(() => { fetchAll(); }, []);
+
+  const handlePickupReady = async (o: Order) => {
+    if (actionId) return;
+    setActionId(o.id);
+    try {
+      await api.post(`/${o.id}/pickup-ready`);
+      toast('success', `Cliente notificado por email — pedido #${o.id} disponível para levantamento.`);
+      await fetchAll();
+    } catch (err: any) {
+      toast('error', err?.response?.data?.error || 'Erro ao enviar email de levantamento');
+    } finally {
+      setActionId(null);
+    }
+  };
 
   // ---- Ações (em conjunto com backend) ----
   const handleConfirm = async (o: Order) => {
@@ -315,11 +358,13 @@ function OverviewPanel({
           <span className="text-xs text-zinc-400">{history.length} registos</span>
         </div>
         <OrdersTable
-          orders={history.slice(0, 15)}
+          orders={history.slice(0, 80)}
           loading={loading}
           actionId={actionId}
           onConfirm={handleConfirm}
           onShip={handleShip}
+          onPickupReady={handlePickupReady}
+          onPickupCollected={handlePickupCollected}
           onDelete={handleDelete}
           onView={(o) => setDetailsId(o.id)}
         />
@@ -327,7 +372,13 @@ function OverviewPanel({
 
       {detailsId !== null && (
         <ModalErrorBoundary onClose={() => setDetailsId(null)} label={`Pedido #${detailsId}`}>
-          <OrderDetailsModal orderId={detailsId} onClose={() => setDetailsId(null)} />
+          <OrderDetailsModal
+            orderId={detailsId}
+            toast={toast}
+            onPickupNotified={fetchAll}
+            onMarkPickupCollected={handlePickupCollected}
+            onClose={() => setDetailsId(null)}
+          />
         </ModalErrorBoundary>
       )}
     </div>
@@ -424,13 +475,15 @@ function statusBadge(status: string) {
 }
 
 function OrdersTable({
-  orders, loading, actionId, onConfirm, onShip, onDelete, onView,
+  orders, loading, actionId, onConfirm, onShip, onPickupReady, onPickupCollected, onDelete, onView,
 }: {
   orders: Order[];
   loading: boolean;
   actionId: number | null;
   onConfirm: (o: Order) => void;
   onShip: (o: Order) => void;
+  onPickupReady: (o: Order) => void;
+  onPickupCollected: (o: Order) => void;
   onDelete: (o: Order) => void;
   onView: (o: Order) => void;
 }) {
@@ -506,6 +559,26 @@ function OrdersTable({
                         <Store size={9} /> Na loja
                       </span>
                     )}
+                    {o.pickup_ready_notified_at && isWebsiteStorePickup(o) && o.status === 'pago' && (
+                      <span
+                        title={`Email de levantamento enviado — ${new Date(o.pickup_ready_notified_at).toLocaleString('pt-PT')}`}
+                        className="text-[9px] font-black bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded-full uppercase"
+                      >
+                        Levantamento ✓
+                      </span>
+                    )}
+                    {o.status === 'entregue' && isWebsiteStorePickup(o) && (
+                      <span
+                        title={
+                          o.pickup_collected_at
+                            ? `Levantamento confirmado — ${new Date(o.pickup_collected_at).toLocaleString('pt-PT')}`
+                            : 'Levantamento na loja concluído'
+                        }
+                        className="text-[9px] font-black bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded-full uppercase flex items-center gap-0.5"
+                      >
+                        <CheckCircle2 size={9} /> Entregue
+                      </span>
+                    )}
                     {needsShipping && (
                       <span
                         title="Pago — pronto para enviar via CTT"
@@ -567,7 +640,7 @@ function OrdersTable({
         <div
           onClick={(e) => e.stopPropagation()}
           style={openMenu.menuStyle}
-          className="fixed z-[50] bg-white border border-gray-100 rounded-2xl shadow-xl py-1 w-56 overflow-x-hidden animate-in fade-in slide-in-from-top-2"
+          className="fixed z-[50] bg-white border border-gray-100 rounded-2xl shadow-xl py-1 min-w-[240px] max-w-[290px] overflow-x-hidden animate-in fade-in slide-in-from-top-2"
         >
           <DropItem
             icon={<Eye size={14} />}
@@ -581,12 +654,30 @@ function OrdersTable({
             disabled={current.status !== 'aguardando_pagamento'}
             onClick={() => { setOpenMenu(null); onConfirm(current); }}
           />
-          <DropItem
-            icon={<Send size={14} />}
-            label="Enviar via CTT"
-            disabled={current.status !== 'pago'}
-            onClick={() => { setOpenMenu(null); onShip(current); }}
-          />
+          {current.status === 'pago' && !isWebsiteStorePickup(current) && (
+            <DropItem
+              icon={<Send size={14} />}
+              label="Enviar via CTT"
+              onClick={() => { setOpenMenu(null); onShip(current); }}
+            />
+          )}
+          {current.status === 'pago' && isWebsiteStorePickup(current) && (
+            <>
+              <DropItem
+                icon={<PackageCheck size={14} />}
+                label="Libertar p/ levantamento (email)"
+                badge={current.pickup_ready_notified_at ? 'enviado' : undefined}
+                disabled={Boolean(current.pickup_ready_notified_at) || actionId === current.id}
+                onClick={() => { setOpenMenu(null); onPickupReady(current); }}
+              />
+              <DropItem
+                icon={<CheckCircle2 size={14} />}
+                label="Marcar como retirado na loja"
+                disabled={actionId === current.id}
+                onClick={() => { setOpenMenu(null); onPickupCollected(current); }}
+              />
+            </>
+          )}
           <div className="border-t border-gray-100 my-1" />
           <DropItem
             icon={<Trash2 size={14} />}
@@ -623,7 +714,7 @@ function DropItem({
       }`}
     >
       {icon}
-      <span className="flex-1">{label}</span>
+      <span className="flex-1 text-left leading-snug whitespace-normal">{label}</span>
       {badge && (
         <span className="text-[9px] uppercase font-black bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
           {badge}
@@ -1724,18 +1815,25 @@ function CustomerCombobox({
 // OrderDetailsModal — visualização completa do pedido
 // =============================================================
 function OrderDetailsModal({
-  orderId, onClose,
+  orderId, onClose, toast, onPickupNotified, onMarkPickupCollected,
 }: {
   orderId: number;
   onClose: () => void;
+  toast: (t: 'success' | 'error', m: string) => void;
+  onPickupNotified?: () => void;
+  onMarkPickupCollected?: (o: Order) => Promise<void>;
 }) {
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const [pickupBusy, setPickupBusy] = useState(false);
+  const [collectBusy, setCollectBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    setError(null);
     api.get(`/${orderId}`)
       .then((res) => {
         if (!alive) return;
@@ -1751,7 +1849,7 @@ function OrderDetailsModal({
       .catch(err => { if (alive) setError(err?.response?.data?.error || 'Erro ao carregar pedido'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [orderId]);
+  }, [orderId, reload]);
 
   const itemsTotal = useMemo(() => {
     if (!order?.items) return 0;
@@ -1823,6 +1921,32 @@ function OrderDetailsModal({
                 {new Date(order.created_at).toLocaleString('pt-PT')}
               </span>
             </div>
+
+            {order.pickup_ready_notified_at && isWebsiteStorePickup(order) && order.status === 'pago' && (
+              <div className="flex items-start gap-2 rounded-xl bg-teal-50 border border-teal-100 px-4 py-3 text-sm font-bold text-teal-900">
+                <PackageCheck size={18} className="shrink-0 text-teal-600 mt-0.5" />
+                <div>
+                  Cliente já foi notificado para levantar na loja.
+                  <p className="text-xs font-semibold text-teal-800/80 mt-1">
+                    {new Date(order.pickup_ready_notified_at).toLocaleString('pt-PT')}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {order.status === 'entregue' && isWebsiteStorePickup(order) && (
+              <div className="flex items-start gap-2 rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3 text-sm font-bold text-emerald-900">
+                <CheckCircle2 size={18} className="shrink-0 text-emerald-600 mt-0.5" />
+                <div>
+                  Levantamento na loja confirmado.
+                  {order.pickup_collected_at && (
+                    <p className="text-xs font-semibold text-emerald-800/80 mt-1">
+                      {new Date(order.pickup_collected_at).toLocaleString('pt-PT')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Cliente */}
             <div className="bg-zinc-50 rounded-2xl p-4 space-y-1">
@@ -1931,7 +2055,54 @@ function OrderDetailsModal({
           </div>
         )}
 
-        <div className="p-4 border-t border-gray-50 flex justify-end">
+        <div className="p-4 border-t border-gray-50 flex flex-wrap items-center justify-end gap-2">
+          {order && !loading && order.status === 'pago' && isWebsiteStorePickup(order) && onMarkPickupCollected && (
+            <button
+              type="button"
+              disabled={collectBusy}
+              title="Regista que o cliente já recolheu os artigos na loja"
+              onClick={async () => {
+                setCollectBusy(true);
+                try {
+                  await onMarkPickupCollected(order);
+                  setReload((k) => k + 1);
+                  onPickupNotified?.();
+                } catch {
+                  /* erro já tratado pelo handler / toast */
+                } finally {
+                  setCollectBusy(false);
+                }
+              }}
+              className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {collectBusy ? <RefreshCw className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+              Marcar como retirado na loja
+            </button>
+          )}
+          {order && !loading && order.status === 'pago' && isWebsiteStorePickup(order) && !order.pickup_ready_notified_at && (
+            <button
+              type="button"
+              disabled={pickupBusy || !order.email?.trim()}
+              title={!order.email?.trim() ? 'Este pedido não tem email — não é possível notificar pelo correio.' : 'Envia ao cliente um email para levantamento na loja'}
+              onClick={async () => {
+                setPickupBusy(true);
+                try {
+                  await api.post(`/${order.id}/pickup-ready`);
+                  toast('success', `Email enviado — pedido #${order.id} liberado para levantamento na loja.`);
+                  setReload((k) => k + 1);
+                  onPickupNotified?.();
+                } catch (err: any) {
+                  toast('error', err?.response?.data?.error || 'Erro ao enviar email de levantamento');
+                } finally {
+                  setPickupBusy(false);
+                }
+              }}
+              className="px-5 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {pickupBusy ? <RefreshCw className="animate-spin" size={16} /> : <PackageCheck size={16} />}
+              Libertar p/ levantamento
+            </button>
+          )}
           <button
             onClick={onClose}
             className="px-5 py-2.5 rounded-xl bg-zinc-100 text-sm font-bold hover:bg-zinc-200"
