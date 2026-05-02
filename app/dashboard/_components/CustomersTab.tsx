@@ -5,6 +5,7 @@ import {
   Plus, Search, MoreHorizontal, Pencil, Trash2, RefreshCw, X, Phone, Mail, ShoppingBag, MapPin,
 } from 'lucide-react';
 import api from '../../../lib/api';
+import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
 import { sanitizeWhatsappDigits } from '../../../lib/whatsappDigits';
 
 type CustomerForm = {
@@ -83,7 +84,7 @@ export default function CustomersTab() {
   const [newAddr, setNewAddr] = useState<NewAddressDraft>(emptyNewAddress);
   const [addrSaving, setAddrSaving] = useState(false);
 
-  const [openMenu, setOpenMenu] = useState<{ id: string; top: number; right: number } | null>(null);
+  const [openMenu, setOpenMenu] = useState<{ id: string; menuStyle: React.CSSProperties } | null>(null);
   const [deletingCustomer, setDeletingCustomer] = useState<Record<string, unknown> | null>(null);
   const [deleteError, setDeleteError] = useState('');
   const [deleting, setDeleting] = useState(false);
@@ -348,7 +349,7 @@ export default function CustomersTab() {
                           setOpenMenu(
                             openMenu?.id === String(c.id)
                               ? null
-                              : { id: String(c.id), top: rect.bottom + 4, right: window.innerWidth - rect.right },
+                              : { id: String(c.id), menuStyle: layoutFixedActionMenu(rect) },
                           );
                         }}
                         className="hover:text-black transition p-1 rounded-lg hover:bg-zinc-100"
@@ -375,8 +376,8 @@ export default function CustomersTab() {
         <>
           <div className="fixed inset-0 z-10" role="presentation" onClick={() => setOpenMenu(null)} />
           <div
-            className="fixed z-20 bg-white border border-gray-100 rounded-2xl shadow-xl py-1 w-40 overflow-hidden"
-            style={{ top: openMenu.top, right: openMenu.right }}
+            className="fixed z-20 bg-white border border-gray-100 rounded-2xl shadow-xl py-1 w-40 overflow-x-hidden"
+            style={openMenu.menuStyle}
           >
             {customers.filter((c) => String(c.id) === openMenu.id).map((c) => (
               <React.Fragment key={String(c.id)}>

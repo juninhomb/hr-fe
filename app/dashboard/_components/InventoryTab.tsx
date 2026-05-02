@@ -3,9 +3,10 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Search, MoreHorizontal, Pencil, Trash2, RefreshCw, X,
   Layers, Package, Boxes, Euro, Image as ImageIcon, Upload, Sparkles,
-  Star, Eye, EyeOff,
+  Star, Eye, EyeOff, Filter,
 } from 'lucide-react';
 import api, { resolveImageUrl } from '../../../lib/api';
+import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
 import { suggestCategoryId } from '../../../lib/categorySuggester';
 
 type BaseProduct = {
@@ -24,6 +25,10 @@ export default function InventoryTab() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const [filterCategory, setFilterCategory] = useState<string>('all');
+  const [filterVisibility, setFilterVisibility] = useState<string>('all');
+  const [filterStock, setFilterStock] = useState<string>('all');
+  const [filterFeatured, setFilterFeatured] = useState<string>('all');
 
   const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
   const [createMode, setCreateMode] = useState<CreateMode>('new_product');
@@ -51,7 +56,7 @@ export default function InventoryTab() {
   const [saving, setSaving] = useState(false);
   const [baseProducts, setBaseProducts] = useState<BaseProduct[]>([]);
 
-  const [openMenu, setOpenMenu] = useState<{ id: string; top: number; right: number } | null>(null);
+  const [openMenu, setOpenMenu] = useState<{ id: string; menuStyle: React.CSSProperties } | null>(null);
   const [deletingProduct, setDeletingProduct] = useState<any>(null);
   const [deleteError, setDeleteError] = useState('');
   const [deleting, setDeleting] = useState(false);
@@ -178,9 +183,42 @@ export default function InventoryTab() {
     return products.some(p => p.sku === skuUp);
   }, [form.sku, products, modalMode]);
 
-  // Totais de stock (unidades + valor a preço de venda)
+  const filteredProducts = useMemo(() => {
+    return products.filter((p) => {
+      if (filterCategory === 'none') {
+        if (p.category_id != null) return false;
+      } else if (filterCategory !== 'all') {
+        if (String(p.category_id) !== filterCategory) return false;
+      }
+      const visible = p.variant_is_active !== false;
+      if (filterVisibility === 'visible' && !visible) return false;
+      if (filterVisibility === 'hidden' && visible) return false;
+      const stock = Number(p.stock) || 0;
+      if (filterStock === 'out' && stock !== 0) return false;
+      if (filterStock === 'low' && (stock < 1 || stock > 5)) return false;
+      if (filterStock === 'ok' && stock <= 5) return false;
+      if (filterFeatured === 'yes' && !p.is_featured) return false;
+      if (filterFeatured === 'no' && p.is_featured) return false;
+      return true;
+    });
+  }, [products, filterCategory, filterVisibility, filterStock, filterFeatured]);
+
+  const inventoryFiltersActive =
+    filterCategory !== 'all' ||
+    filterVisibility !== 'all' ||
+    filterStock !== 'all' ||
+    filterFeatured !== 'all';
+
+  const clearInventoryFilters = () => {
+    setFilterCategory('all');
+    setFilterVisibility('all');
+    setFilterStock('all');
+    setFilterFeatured('all');
+  };
+
+  // Totais de stock (unidades + valor a preço de venda) — respeitam filtros locais
   const stockTotals = useMemo(() => {
-    return products.reduce(
+    return filteredProducts.reduce(
       (acc, p) => {
         const units = Number(p.stock) || 0;
         const price = Number(p.price) || 0;
@@ -190,7 +228,7 @@ export default function InventoryTab() {
       },
       { units: 0, value: 0 }
     );
-  }, [products]);
+  }, [filteredProducts]);
 
   // ID da sugestão de categoria — para exibir o badge "Auto" se bater certo
   const suggestedCategoryId = useMemo(() => {
@@ -438,33 +476,106 @@ export default function InventoryTab() {
       </div>
 
       <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden animate-in slide-in-from-bottom-4">
-        <div className="p-8 border-b border-gray-50 flex flex-col sm:flex-row sm:items-center gap-4">
-          <div className="flex-1">
-            <h3 className="font-bold text-xl">Inventário Completo</h3>
+        <div className="p-8 border-b border-gray-50 space-y-5">
+          <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+            <div className="flex-1 min-w-0">
+              <h3 className="font-bold text-xl">Inventário Completo</h3>
+              {products.length > 0 && filteredProducts.length !== products.length && (
+                <p className="text-[11px] text-zinc-500 mt-1">
+                  A mostrar {filteredProducts.length} de {products.length} linhas (filtros locais).
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => fetchProducts()}
+                className={`p-2.5 bg-zinc-50 rounded-xl border border-gray-100 ${loading ? 'animate-spin' : ''}`}
+                title="Atualizar lista"
+              >
+                <RefreshCw size={17} />
+              </button>
+              <button
+                type="button"
+                onClick={openModal}
+                className="bg-black text-white px-5 py-2.5 rounded-xl text-sm font-bold inline-flex items-center gap-2 hover:bg-zinc-800 transition"
+              >
+                <Plus size={18} />
+                <span>Novo Item</span>
+              </button>
+            </div>
           </div>
-          <div className="relative">
-            <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Pesquisar por nome ou SKU..."
-              className="pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-black w-64"
-            />
+
+          <div className="bg-zinc-50/80 rounded-[24px] border border-gray-100/80 p-4 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <div className="flex items-center gap-1.5 text-zinc-500">
+                <Filter size={14} />
+                <span className="text-[10px] uppercase font-bold">Filtros</span>
+              </div>
+              <div className="relative flex-1 min-w-[200px]">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Nome ou SKU…"
+                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-black"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <InventoryFilterSelect
+                label="Categoria"
+                value={filterCategory}
+                onChange={setFilterCategory}
+                options={[
+                  { v: 'all', l: 'Todas' },
+                  { v: 'none', l: 'Sem categoria' },
+                  ...categories.map(c => ({ v: String(c.id), l: c.name })),
+                ]}
+              />
+              <InventoryFilterSelect
+                label="Loja"
+                value={filterVisibility}
+                onChange={setFilterVisibility}
+                options={[
+                  { v: 'all', l: 'Todos' },
+                  { v: 'visible', l: 'Visível' },
+                  { v: 'hidden', l: 'Oculto' },
+                ]}
+              />
+              <InventoryFilterSelect
+                label="Stock"
+                value={filterStock}
+                onChange={setFilterStock}
+                options={[
+                  { v: 'all', l: 'Qualquer' },
+                  { v: 'out', l: 'Sem stock (0)' },
+                  { v: 'low', l: 'Baixo (1–5)' },
+                  { v: 'ok', l: 'OK (mais de 5)' },
+                ]}
+              />
+              <InventoryFilterSelect
+                label="Destaque"
+                value={filterFeatured}
+                onChange={setFilterFeatured}
+                options={[
+                  { v: 'all', l: 'Todos' },
+                  { v: 'yes', l: 'Só destaques' },
+                  { v: 'no', l: 'Sem destaque' },
+                ]}
+              />
+              {inventoryFiltersActive && (
+                <button
+                  type="button"
+                  onClick={clearInventoryFilters}
+                  className="text-[10px] uppercase font-bold text-zinc-500 hover:text-black px-3 py-2 rounded-xl border border-dashed border-zinc-300 hover:border-zinc-400 transition"
+                >
+                  Limpar filtros
+                </button>
+              )}
+            </div>
           </div>
-          <button
-            onClick={() => fetchProducts()}
-            className={`p-2 bg-zinc-50 rounded-xl border border-gray-100 ${loading ? 'animate-spin' : ''}`}
-          >
-            <RefreshCw size={17} />
-          </button>
-          <button
-            onClick={openModal}
-            className="bg-black text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center space-x-2 hover:bg-zinc-800 transition shrink-0"
-          >
-            <Plus size={18} />
-            <span>Novo Item</span>
-          </button>
         </div>
 
         <div className="overflow-x-auto">
@@ -482,7 +593,7 @@ export default function InventoryTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {products.map((item) => {
+              {filteredProducts.map((item) => {
                 const imgFull = resolveImageUrl(item.image_url);
                 const isVisibleOnStore = item.variant_is_active !== false;
                 return (
@@ -557,7 +668,7 @@ export default function InventoryTab() {
                             setOpenMenu(
                               openMenu?.id === item.sku
                                 ? null
-                                : { id: item.sku, top: rect.bottom + 4, right: window.innerWidth - rect.right }
+                                : { id: item.sku, menuStyle: layoutFixedActionMenu(rect) }
                             );
                           }}
                           className="hover:text-black transition p-1 rounded-lg hover:bg-zinc-100"
@@ -569,20 +680,26 @@ export default function InventoryTab() {
                   </tr>
                 );
               })}
-              {products.length === 0 && !loading && (
+              {filteredProducts.length === 0 && !loading && (
                 <tr>
                   <td colSpan={8} className="px-8 py-16 text-center text-zinc-400 text-sm">
-                    Nenhum produto encontrado.
+                    {products.length === 0
+                      ? 'Nenhum produto encontrado.'
+                      : 'Nenhum produto corresponde aos filtros.'}
                   </td>
                 </tr>
               )}
             </tbody>
-            {products.length > 0 && (
+            {filteredProducts.length > 0 && (
               <tfoot className="bg-gray-50/70 border-t-2 border-gray-100">
                 <tr>
                   <td className="px-6 py-5" colSpan={4}>
                     <span className="text-[10px] uppercase font-black tracking-wider text-black">
-                      Total ({products.length} {products.length === 1 ? 'item' : 'itens'})
+                      Total ({filteredProducts.length}{' '}
+                      {filteredProducts.length === 1 ? 'item' : 'itens'}
+                      {inventoryFiltersActive && products.length !== filteredProducts.length
+                        ? ` · ${products.length} no total`
+                        : ''})
                     </span>
                   </td>
                   <td className="px-6 py-5 text-right font-mono font-black text-sm text-emerald-600">
@@ -603,14 +720,14 @@ export default function InventoryTab() {
       </div>
 
       {/* Dropdown Menu (fixed — escapa do overflow-hidden) */}
-      {openMenu && products.some(p => p.sku === openMenu.id) && (
+      {openMenu && filteredProducts.some(p => p.sku === openMenu.id) && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpenMenu(null)} />
           <div
-            className="fixed z-20 bg-white border border-gray-100 rounded-2xl shadow-xl py-1 min-w-[11.5rem] overflow-hidden"
-            style={{ top: openMenu.top, right: openMenu.right }}
+            className="fixed z-20 bg-white border border-gray-100 rounded-2xl shadow-xl py-1 min-w-[11.5rem] overflow-x-hidden"
+            style={openMenu.menuStyle}
           >
-            {products.filter(p => p.sku === openMenu.id).map(item => {
+            {filteredProducts.filter(p => p.sku === openMenu.id).map(item => {
               const visibleInStore = item.variant_is_active !== false;
               const visibilityBusyForRow = visibilityBusySku === item.sku;
               return (
@@ -1029,6 +1146,33 @@ export default function InventoryTab() {
         </div>
       )}
     </>
+  );
+}
+
+function InventoryFilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { v: string; l: string }[];
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-[10px] uppercase font-bold text-zinc-400 whitespace-nowrap">{label}</span>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="text-xs px-3 py-2 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-black max-w-[11rem] sm:max-w-none"
+      >
+        {options.map(o => (
+          <option key={o.v} value={o.v}>{o.l}</option>
+        ))}
+      </select>
+    </div>
   );
 }
 

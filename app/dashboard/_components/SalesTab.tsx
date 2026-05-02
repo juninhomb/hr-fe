@@ -7,6 +7,7 @@ import {
   MapPin, Mail, Phone, StickyNote,
 } from 'lucide-react';
 import api from '../../../lib/api';
+import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
 import { getDefaultShippingFeeEur } from '../../../lib/defaultShippingFee';
 
 // =============================================================
@@ -433,7 +434,7 @@ function OrdersTable({
   onDelete: (o: Order) => void;
   onView: (o: Order) => void;
 }) {
-  const [openMenu, setOpenMenu] = useState<{ id: number; top: number; right: number } | null>(null);
+  const [openMenu, setOpenMenu] = useState<{ id: number; menuStyle: React.CSSProperties } | null>(null);
 
   // Fecha dropdown ao clicar fora
   useEffect(() => {
@@ -545,7 +546,7 @@ function OrdersTable({
                         setOpenMenu(
                           openMenu?.id === o.id
                             ? null
-                            : { id: o.id, top: rect.bottom + 4, right: window.innerWidth - rect.right }
+                            : { id: o.id, menuStyle: layoutFixedActionMenu(rect) }
                         );
                       }}
                       className="hover:text-black transition p-1 rounded-lg hover:bg-zinc-100 text-zinc-400 disabled:opacity-40"
@@ -565,8 +566,8 @@ function OrdersTable({
       {openMenu && current && (
         <div
           onClick={(e) => e.stopPropagation()}
-          style={{ position: 'fixed', top: openMenu.top, right: openMenu.right, zIndex: 50 }}
-          className="bg-white border border-gray-100 rounded-2xl shadow-xl py-1 w-56 animate-in fade-in slide-in-from-top-2"
+          style={openMenu.menuStyle}
+          className="fixed z-[50] bg-white border border-gray-100 rounded-2xl shadow-xl py-1 w-56 overflow-x-hidden animate-in fade-in slide-in-from-top-2"
         >
           <DropItem
             icon={<Eye size={14} />}
