@@ -1,11 +1,13 @@
 'use client';
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Plus, Search, MoreHorizontal, Pencil, Trash2, RefreshCw, X,
   Layers, Package, Boxes, Euro, Image as ImageIcon, Upload, Sparkles,
-  Star, Eye, EyeOff, Filter,
+  Star, Eye, EyeOff, Filter, FileSpreadsheet,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import api, { resolveImageUrl } from '../../../lib/api';
+import { parseInventoryImportWorkbook } from '../../../lib/inventoryExcel';
 import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
 import { suggestCategoryId } from '../../../lib/categorySuggester';
 
@@ -61,6 +63,13 @@ export default function InventoryTab() {
   const [deleteError, setDeleteError] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [visibilityBusySku, setVisibilityBusySku] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importNotice, setImportNotice] = useState<{
+    ok: boolean;
+    text: string;
+    details?: string[];
+  } | null>(null);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
 
   const fetchProducts = async (q = search) => {
     setLoading(true);
@@ -214,6 +223,88 @@ export default function InventoryTab() {
     setFilterVisibility('all');
     setFilterStock('all');
     setFilterFeatured('all');
+  };
+
+  const exportInventoryExcel = useCallback(() => {
+    if (filteredProducts.length === 0) return;
+    const rows = filteredProducts.map((item) => ({
+      'ID variante': item.id,
+      'ID produto': item.product_id ?? '',
+      Produto: item.name ?? '',
+      Cor: item.color ?? '',
+      Tamanho: item.size ?? '',
+      Categoria: item.category_name ?? '',
+      SKU: item.sku ?? '',
+      'Preço (€)': Number(item.price) || 0,
+      Stock: Number(item.stock) || 0,
+      'Visível na loja': item.variant_is_active !== false ? 'Sim' : 'Não',
+      Destaque: item.is_featured ? 'Sim' : 'Não',
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Inventário');
+    const dateStr = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `inventario-hr-store-${dateStr}.xlsx`);
+  }, [filteredProducts]);
+
+  const runInventoryImport = async (file: File) => {
+    setImportNotice(null);
+    let ab: ArrayBuffer;
+    try {
+      ab = await file.arrayBuffer();
+    } catch {
+      setImportNotice({ ok: false, text: 'Não foi possível ler o ficheiro.' });
+      return;
+    }
+    const { payloads, parseErrors, mapError } = parseInventoryImportWorkbook(ab);
+    if (mapError) {
+      setImportNotice({ ok: false, text: mapError });
+      return;
+    }
+    if (parseErrors.length) {
+      setImportNotice({
+        ok: false,
+        text: `${parseErrors.length} erro(s) no Excel — corrige antes de importar.`,
+        details: parseErrors.slice(0, 20).map(
+          (e) => `Linha ${e.sheetRow} da folha: ${e.reason}`
+        ),
+      });
+      return;
+    }
+    if (!payloads.length) {
+      setImportNotice({ ok: false, text: 'Nenhuma linha com SKU para importar.' });
+      return;
+    }
+    setImporting(true);
+    try {
+      const res = await api.post('/products/import', { rows: payloads });
+      const updated = Number(res.data?.updated) || 0;
+      const failed = Array.isArray(res.data?.failed) ? res.data.failed : [];
+      if (failed.length) {
+        setImportNotice({
+          ok: updated > 0,
+          text:
+            updated > 0
+              ? `Actualizados: ${updated}. Linhas com erro: ${failed.length}.`
+              : `Nenhuma linha actualizada. Erros: ${failed.length}.`,
+          details: failed.slice(0, 25).map(
+            (f: { row: number; sku: string; reason: string }) =>
+              `Linha ${f.row}${f.sku ? ` · ${f.sku}` : ''}: ${f.reason}`
+          ),
+        });
+      } else {
+        setImportNotice({ ok: true, text: `${updated} linha(s) actualizadas com sucesso.` });
+      }
+      fetchProducts();
+    } catch (err: unknown) {
+      const msg =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { error?: string } } }).response?.data?.error
+          : null;
+      setImportNotice({ ok: false, text: msg || 'Falha ao importar.' });
+    } finally {
+      setImporting(false);
+    }
   };
 
   // Totais de stock (unidades + valor a preço de venda) — respeitam filtros locais
@@ -495,6 +586,37 @@ export default function InventoryTab() {
               >
                 <RefreshCw size={17} />
               </button>
+              <input
+                ref={importFileRef}
+                type="file"
+                accept=".xlsx,.xls"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f) void runInventoryImport(f);
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => importFileRef.current?.click()}
+                disabled={loading || importing}
+                className="border border-gray-200 bg-white text-black px-4 sm:px-5 py-2.5 rounded-xl text-sm font-bold inline-flex items-center gap-2 hover:bg-zinc-50 transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
+                title="Importa Excel (mesmo formato exportado): só actualiza SKU existentes"
+              >
+                <Upload size={18} />
+                <span className="hidden sm:inline">Importar</span>
+              </button>
+              <button
+                type="button"
+                onClick={exportInventoryExcel}
+                disabled={loading || filteredProducts.length === 0}
+                className="border border-gray-200 bg-white text-black px-4 sm:px-5 py-2.5 rounded-xl text-sm font-bold inline-flex items-center gap-2 hover:bg-zinc-50 transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
+                title="Exporta as linhas visíveis (pesquisa e filtros) para ficheiro Excel"
+              >
+                <FileSpreadsheet size={18} />
+                <span className="hidden sm:inline">Excel</span>
+              </button>
               <button
                 type="button"
                 onClick={openModal}
@@ -505,6 +627,34 @@ export default function InventoryTab() {
               </button>
             </div>
           </div>
+
+          {importNotice && (
+            <div
+              className={`rounded-2xl border px-4 py-3 text-sm ${
+                importNotice.ok
+                  ? 'border-emerald-200 bg-emerald-50/80 text-emerald-900'
+                  : 'border-amber-200 bg-amber-50/80 text-amber-950'
+              }`}
+            >
+              <div className="flex justify-between gap-3 items-start">
+                <p className="font-semibold leading-snug">{importNotice.text}</p>
+                <button
+                  type="button"
+                  onClick={() => setImportNotice(null)}
+                  className="shrink-0 text-[10px] uppercase font-bold opacity-70 hover:opacity-100"
+                >
+                  Fechar
+                </button>
+              </div>
+              {importNotice.details && importNotice.details.length > 0 && (
+                <ul className="mt-2 space-y-1 text-xs font-mono opacity-90 max-h-40 overflow-y-auto">
+                  {importNotice.details.map((line, i) => (
+                    <li key={i}>{line}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
 
           <div className="bg-zinc-50/80 rounded-[24px] border border-gray-100/80 p-4 flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">

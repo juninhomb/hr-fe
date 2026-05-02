@@ -1,9 +1,9 @@
 'use client';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   TrendingUp, ShoppingCart, AlertCircle, Users, RefreshCw,
   Clock, Package, Euro, ArrowRight, MessageCircle, Store, Globe,
-  Crown, Phone, Send,
+  Crown, Phone, Send, Star, EyeOff, Boxes,
 } from 'lucide-react';
 import api from '../../../lib/api';
 
@@ -13,7 +13,8 @@ import api from '../../../lib/api';
 type TabId = 'dashboard' | 'inventory' | 'sales' | 'customers';
 
 type DashboardStats = {
-  sales_today: number;
+  orders_paid_today: number;
+  orders_placed_today: number;
   revenue_today: number;
   revenue_7d: number;
   revenue_30d: number;
@@ -26,6 +27,10 @@ type DashboardStats = {
   to_ship_value: number;
   total_stock: number;
   total_products: number;
+  total_variants: number;
+  stock_value_eur: number;
+  featured_products_count: number;
+  hidden_variants_count: number;
   revenue_series: { dia: string; revenue: number; orders_count: number }[];
   top_products: { name: string; qty_sold: number; revenue: number }[];
   sales_by_origin: { origin: string; count: number; revenue: number }[];
@@ -115,11 +120,20 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
           onClick={() => go('sales')}
         />
         <KpiCard
-          label="Pedidos Hoje"
-          value={String(stats?.sales_today ?? '0')}
+          label="Pedidos concluídos hoje"
+          value={String(stats?.orders_paid_today ?? '0')}
           icon={ShoppingCart}
           tone="blue"
-          subtitle="Ver vendas →"
+          subtitle={
+            stats
+              ? `${stats.orders_placed_today} pedidos iniciados hoje (qualquer estado)`
+              : ''
+          }
+          subtitleHint={
+            stats && stats.orders_placed_today > stats.orders_paid_today
+              ? 'Contagem principal: pagos, enviados ou entregues no mesmo dia.'
+              : undefined
+          }
           onClick={() => go('sales')}
         />
         <KpiCard
@@ -129,7 +143,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
           tone={((stats?.low_stock_count ?? 0) + (stats?.out_of_stock_count ?? 0)) > 0 ? 'red' : 'zinc'}
           subtitle={
             stats
-              ? `${stats.out_of_stock_count} esgotadas · ${stats.low_stock_count} com 1 un.`
+              ? `${stats.out_of_stock_count} esgotadas · ${stats.low_stock_count} baixo (1–5 un.)`
               : 'A carregar…'
           }
           onClick={() => go('inventory')}
@@ -144,40 +158,71 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
         />
       </div>
 
-      {/* Quick links secundários */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <QuickStat
-          icon={Clock}
-          label="Pendentes"
-          value={String(stats?.pending_count ?? 0)}
-          extra={stats ? `€ ${Number(stats.pending_value).toFixed(2)}` : '€ 0.00'}
-          tone="amber"
-          onClick={() => go('sales')}
-        />
-        <QuickStat
-          icon={Send}
-          label="A enviar (CTT)"
-          value={String(stats?.to_ship_count ?? 0)}
-          extra={stats ? `€ ${Number(stats.to_ship_value).toFixed(2)}` : '€ 0.00'}
-          tone="blue"
-          onClick={() => go('sales')}
-        />
-        <QuickStat
-          icon={Package}
-          label="Stock total"
-          value={String(stats?.total_stock ?? 0)}
-          extra={`${stats?.total_products ?? 0} produtos`}
-          tone="zinc"
-          onClick={() => go('inventory')}
-        />
-        <QuickStat
-          icon={Euro}
-          label="Receita 30d"
-          value={`€ ${Number(stats?.revenue_30d || 0).toFixed(2)}`}
-          extra="Últimos 30 dias"
-          tone="emerald"
-          onClick={() => go('sales')}
-        />
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <QuickStat
+            icon={Clock}
+            label="Pendentes"
+            value={String(stats?.pending_count ?? 0)}
+            extra={stats ? `€ ${Number(stats.pending_value).toFixed(2)}` : '€ 0.00'}
+            tone="amber"
+            onClick={() => go('sales')}
+          />
+          <QuickStat
+            icon={Send}
+            label="A enviar (CTT)"
+            value={String(stats?.to_ship_count ?? 0)}
+            extra={stats ? `€ ${Number(stats.to_ship_value).toFixed(2)}` : '€ 0.00'}
+            tone="blue"
+            onClick={() => go('sales')}
+          />
+          <QuickStat
+            icon={Package}
+            label="Stock total"
+            value={String(stats?.total_stock ?? 0)}
+            extra={
+              stats
+                ? `${stats.total_variants ?? 0} SKU · ${stats.total_products ?? 0} produtos-base`
+                : undefined
+            }
+            tone="zinc"
+            onClick={() => go('inventory')}
+          />
+          <QuickStat
+            icon={Euro}
+            label="Receita 30d"
+            value={`€ ${Number(stats?.revenue_30d || 0).toFixed(2)}`}
+            extra="Últimos 30 dias"
+            tone="emerald"
+            onClick={() => go('sales')}
+          />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <QuickStat
+            icon={Boxes}
+            label="Valor em stock"
+            value={`€ ${Number(stats?.stock_value_eur || 0).toFixed(2)}`}
+            extra="Unid. × preço base"
+            tone="emerald"
+            onClick={() => go('inventory')}
+          />
+          <QuickStat
+            icon={Star}
+            label="Produtos em destaque"
+            value={String(stats?.featured_products_count ?? 0)}
+            extra="Marcados na home"
+            tone="purple"
+            onClick={() => go('inventory')}
+          />
+          <QuickStat
+            icon={EyeOff}
+            label="Ocultos na loja"
+            value={String(stats?.hidden_variants_count ?? 0)}
+            extra="Variantes inactivas"
+            tone="violet"
+            onClick={() => go('inventory')}
+          />
+        </div>
       </div>
 
       {/* Receita 14 dias + Origem (lado a lado) */}
@@ -239,7 +284,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
               <h3 className="font-bold text-base flex items-center gap-2">
                 <AlertCircle size={16} className="text-red-500" /> Stock crítico
               </h3>
-              <p className="text-[11px] text-zinc-500">Esgotadas e com apenas 1 unidade</p>
+              <p className="text-[11px] text-zinc-500">Esgotadas (0) e baixo stock (1–5 un.), como no inventário</p>
             </div>
             <button onClick={() => go('inventory')} className="text-[11px] text-zinc-500 hover:text-black flex items-center gap-1">
               Repor <ArrowRight size={12} />
@@ -271,13 +316,14 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
 // Cards
 // =============================================================
 function KpiCard({
-  label, value, icon: Icon, tone, subtitle, onClick,
+  label, value, icon: Icon, tone, subtitle, subtitleHint, onClick,
 }: {
   label: string;
   value: string;
   icon: any;
   tone: 'emerald' | 'blue' | 'red' | 'purple' | 'amber' | 'zinc';
   subtitle?: string;
+  subtitleHint?: string;
   onClick?: () => void;
 }) {
   const toneMap: Record<string, { bg: string; text: string; pill: string }> = {
@@ -306,6 +352,9 @@ function KpiCard({
       <p className="text-zinc-400 text-[10px] font-bold uppercase tracking-wider mb-1">{label}</p>
       <p className="text-2xl font-black text-slate-900 font-mono">{value}</p>
       {subtitle && <p className="text-[11px] text-zinc-500 mt-1">{subtitle}</p>}
+      {subtitleHint && (
+        <p className="text-[10px] text-zinc-400 mt-1 leading-snug">{subtitleHint}</p>
+      )}
     </button>
   );
 }
@@ -317,7 +366,7 @@ function QuickStat({
   label: string;
   value: string;
   extra?: string;
-  tone: 'amber' | 'zinc' | 'emerald' | 'blue';
+  tone: 'amber' | 'zinc' | 'emerald' | 'blue' | 'purple' | 'violet';
   onClick?: () => void;
 }) {
   const map: Record<string, string> = {
@@ -325,6 +374,8 @@ function QuickStat({
     zinc: 'text-zinc-600 bg-zinc-100',
     emerald: 'text-emerald-600 bg-emerald-50',
     blue: 'text-blue-600 bg-blue-50',
+    purple: 'text-purple-600 bg-purple-50',
+    violet: 'text-violet-600 bg-violet-50',
   };
   return (
     <button
@@ -585,7 +636,11 @@ function TopCustomersList({ data }: { data: DashboardStats['top_customers'] }) {
 
 function LowStockList({ data }: { data: DashboardStats['low_stock'] }) {
   if (!data.length) {
-    return <p className="text-center text-xs text-emerald-600 py-8">✓ Stock OK em todas as variantes.</p>;
+    return (
+      <p className="text-center text-xs text-emerald-600 py-8">
+        ✓ Nenhuma variante com stock ≤ 5 unidades.
+      </p>
+    );
   }
   return (
     <div className="space-y-2">
@@ -598,13 +653,13 @@ function LowStockList({ data }: { data: DashboardStats['low_stock'] }) {
               {s.color || '—'} · {s.size || '—'} · {s.sku}
             </p>
           </div>
-          <span className={`text-xs font-black px-2 py-1 rounded-full shrink-0 ${
-            s.stock_quantity === 0
-              ? 'bg-red-100 text-red-700'
-              : s.stock_quantity <= 1
-                ? 'bg-red-50 text-red-600'
-                : 'bg-amber-50 text-amber-700'
-          }`}>
+          <span
+            className={`text-xs font-black px-2 py-1 rounded-full shrink-0 ${
+              s.stock_quantity === 0
+                ? 'bg-red-100 text-red-700'
+                : 'bg-amber-50 text-amber-800 border border-amber-100'
+            }`}
+          >
             {s.stock_quantity} un.
           </span>
         </div>
