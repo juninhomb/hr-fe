@@ -74,6 +74,10 @@ type Order = {
   pickup_ready_notified_at?: string | null;
   /** Data/hora em que o cliente levantou na loja (backoffice → entregue). */
   pickup_collected_at?: string | null;
+  /** Cupão aplicado no checkout do site (env `HRSTORE_DISCOUNT_COUPONS`). */
+  coupon_code?: string | null;
+  /** Valor do desconto em EUR sobre o subtotal de artigos. */
+  discount_amount?: number | string | null;
 };
 
 /** Site + recolha em loja (sem envio ao domicílio). */
@@ -2020,6 +2024,22 @@ function OrderDetailsModal({
                 <p className="text-[10px] uppercase font-bold opacity-60">Subtotal (itens)</p>
                 <p className="text-sm font-mono">€ {itemsTotal.toFixed(2)}</p>
               </div>
+
+              {Number(order.discount_amount || 0) > 0.004 && (
+                <div className="flex items-center justify-between pb-2 border-b border-white/20">
+                  <p className="text-[10px] uppercase font-bold opacity-60">
+                    Desconto
+                    {order.coupon_code ? (
+                      <span className="ml-1 font-mono normal-case text-emerald-300">
+                        ({String(order.coupon_code)})
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className="text-sm font-mono text-emerald-300">
+                    − € {Number(order.discount_amount || 0).toFixed(2)}
+                  </p>
+                </div>
+              )}
               
               {order.is_delivery && Number(order.shipping_fee || 0) > 0 && (
                 <div className="flex items-center justify-between pb-2 border-b border-white/20">
@@ -2046,11 +2066,16 @@ function OrderDetailsModal({
                 <p className="text-3xl font-black font-mono">€ {Number(order.total_amount).toFixed(2)}</p>
               </div>
 
-              {Math.abs(Number(order.total_amount) - itemsTotal - Number(order.shipping_fee || 0)) > 0.01 && (
+              {(() => {
+                const disc = Number(order.discount_amount || 0);
+                const ship = Number(order.shipping_fee || 0);
+                const expected = itemsTotal - disc + ship;
+                return Math.abs(Number(order.total_amount) - expected) > 0.02 ? (
                 <p className="text-[10px] text-amber-300 mt-2 pt-2 border-t border-amber-400/30">
-                  ⚠ Soma (itens + entrega) difere do total declarado.
+                  ⚠ Soma (itens − desconto + entrega) difere do total declarado.
                 </p>
-              )}
+                ) : null;
+              })()}
             </div>
           </div>
         )}
