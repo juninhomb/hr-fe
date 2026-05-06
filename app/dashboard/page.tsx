@@ -28,7 +28,16 @@ export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [mounted, setMounted] = useState(false);
 
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    const u = new URL(window.location.href);
+    if (u.searchParams.get('tab') === 'sales') {
+      setActiveTab('sales');
+    }
+    u.searchParams.delete('tab');
+    const qs = u.searchParams.toString();
+    window.history.replaceState({}, '', `${u.pathname}${qs ? `?${qs}` : ''}`);
+    setMounted(true);
+  }, []);
 
   if (!mounted) return null;
 

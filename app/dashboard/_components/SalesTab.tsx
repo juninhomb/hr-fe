@@ -1,10 +1,11 @@
 'use client';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Search, Plus, Minus, Trash2, ShoppingCart, RefreshCw, Check, X,
   Clock, MessageCircle, Store, AlertCircle, Package, ArrowLeft,
   TrendingUp, Euro, Calendar, Filter, Eye, MoreHorizontal, Send,
   MapPin, Mail, Phone, StickyNote, PackageCheck, CheckCircle2,
+  Tag, CreditCard,
 } from 'lucide-react';
 import api from '../../../lib/api';
 import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
@@ -74,7 +75,7 @@ type Order = {
   pickup_ready_notified_at?: string | null;
   /** Data/hora em que o cliente levantou na loja (backoffice → entregue). */
   pickup_collected_at?: string | null;
-  /** Cupão aplicado no checkout do site (env `HRSTORE_DISCOUNT_COUPONS`). */
+  /** Cupão aplicado no checkout (site ou PDV). */
   coupon_code?: string | null;
   /** Valor do desconto em EUR sobre o subtotal de artigos. */
   discount_amount?: number | string | null;
@@ -121,12 +122,12 @@ function ToastStack({ toasts, onClose }: { toasts: Toast[]; onClose: (id: number
 
 function useToasts() {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const push = (type: 'success' | 'error', msg: string) => {
+  const push = useCallback((type: 'success' | 'error', msg: string) => {
     const id = Date.now() + Math.random();
     setToasts(prev => [...prev, { id, type, msg }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
-  };
-  const close = (id: number) => setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+  const close = useCallback((id: number) => setToasts(prev => prev.filter(t => t.id !== id)), []);
   return { toasts, push, close };
 }
 
@@ -138,6 +139,41 @@ type View = 'overview' | 'pdv' | 'pending';
 export default function SalesTab() {
   const [view, setView] = useState<View>('overview');
   const { toasts, push, close } = useToasts();
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = sessionStorage.getItem('hrstore-pdv-stripe-toast');
+      if (!raw) return;
+      sessionStorage.removeItem('hrstore-pdv-stripe-toast');
+      const data = JSON.parse(raw) as {
+        kind?: string;
+        orderId?: number | null;
+        updated?: boolean;
+        reason?: string | null;
+      };
+      if (data.kind === 'canceled') {
+        push(
+          'error',
+          'Pagamento Stripe cancelado. O pedido mantém-se pendente até ser pago ou cancelado.',
+        );
+        return;
+      }
+      if (data.kind === 'paid') {
+        const idPart = data.orderId != null ? ` #${data.orderId}` : '';
+        if (data.updated === false && data.reason === 'no_pending_stripe_order') {
+          push(
+            'success',
+            `Sessão processada${idPart}. Se o pedido já estava pago, o estado está actualizado nas vendas.`,
+          );
+          return;
+        }
+        push('success', `Pagamento Stripe confirmado — pedido${idPart} marcado como pago.`);
+      }
+    } catch {
+      /* noop */
+    }
+  }, [push]);
 
   return (
     <div className="animate-in slide-in-from-bottom-4">
@@ -744,11 +780,16 @@ function PDVPanel({
   const [customerQuery, setCustomerQuery] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
 
-  const [paymentMethod, setPaymentMethod] = useState<'dinheiro' | 'mbway' | 'cartao'>('dinheiro');
+  const [paymentMethod, setPaymentMethod] = useState<'dinheiro' | 'mbway' | 'cartao' | 'stripe'>('dinheiro');
   const [markAsUnpaid, setMarkAsUnpaid] = useState(false);
   const [markAsDelivery, setMarkAsDelivery] = useState(false);
   const [shippingFeeValue, setShippingFeeValue] = useState<number>(() => getDefaultShippingFeeEur());
   const [submitting, setSubmitting] = useState(false);
+
+  const [couponInput, setCouponInput] = useState('');
+  const [couponApplied, setCouponApplied] = useState<{ code: string; discount: number } | null>(null);
+  const [couponBusy, setCouponBusy] = useState(false);
+  const [couponError, setCouponError] = useState<string | null>(null);
 
   const fetchVariants = async (q = search) => {
     setLoading(true);
@@ -781,6 +822,17 @@ function PDVPanel({
     return () => clearTimeout(t);
   }, [customerQuery]);
 
+  useEffect(() => {
+    setCouponApplied(null);
+    setCouponError(null);
+  }, [cart]);
+
+  useEffect(() => {
+    if (paymentMethod === 'stripe') {
+      setMarkAsUnpaid(false);
+    }
+  }, [paymentMethod]);
+
   const addToCart = (v: Variant) => {
     if (Number(v.stock) <= 0) return;
     setCart(prev => {
@@ -808,14 +860,47 @@ function PDVPanel({
 
   const removeLine = (sku: string) => setCart(prev => prev.filter(l => l.sku !== sku));
 
-  const total = useMemo(
-    () => {
-      const itemsTotal = cart.reduce((acc, l) => acc + l.unit_price * l.quantity, 0);
-      const shippingFee = markAsDelivery ? shippingFeeValue : 0;
-      return itemsTotal + shippingFee;
-    },
-    [cart, markAsDelivery, shippingFeeValue]
+  const itemsSubtotal = useMemo(
+    () => Math.round(cart.reduce((acc, l) => acc + l.unit_price * l.quantity, 0) * 100) / 100,
+    [cart]
   );
+  const couponDiscount = couponApplied?.discount ?? 0;
+  const shippingAmount = markAsDelivery ? shippingFeeValue : 0;
+  const grandTotal = useMemo(
+    () => Math.round((itemsSubtotal - couponDiscount + shippingAmount) * 100) / 100,
+    [itemsSubtotal, couponDiscount, shippingAmount]
+  );
+
+  const applyPdvCoupon = async () => {
+    setCouponError(null);
+    const code = couponInput.trim().toUpperCase();
+    if (!code) {
+      setCouponError('Indica o código do cupão.');
+      return;
+    }
+    if (cart.length === 0) return;
+    setCouponBusy(true);
+    try {
+      const res = await api.post<{
+        ok: boolean;
+        coupon_code: string;
+        discount_amount: number;
+      }>('/coupon-quote', {
+        code,
+        items: cart.map(l => ({ sku: l.sku, quantity: l.quantity, unit_price: l.unit_price })),
+      });
+      setCouponApplied({ code: res.data.coupon_code, discount: res.data.discount_amount });
+      setCouponInput(res.data.coupon_code);
+    } catch (err: unknown) {
+      setCouponApplied(null);
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        || 'Cupão inválido.';
+      setCouponError(msg);
+    } finally {
+      setCouponBusy(false);
+    }
+  };
 
   const finalize = async () => {
     if (submitting) return; // guard explícito contra duplo-click race
@@ -830,29 +915,63 @@ function PDVPanel({
     setSubmitting(true);
     try {
       const shippingFee = markAsDelivery ? shippingFeeValue : 0;
+      const isStripe = paymentMethod === 'stripe';
+      const orderStatus = isStripe
+        ? 'aguardando_pagamento'
+        : (markAsUnpaid ? 'aguardando_pagamento' : 'pago');
       const res = await api.post('/create', {
         customer_id: selectedCustomer?.id ?? null,
         items: cart.map(l => ({ sku: l.sku, quantity: l.quantity, unit_price: l.unit_price })),
-        total_amount: total,
         payment_method: paymentMethod,
-        status: markAsUnpaid ? 'aguardando_pagamento' : 'pago',
+        status: orderStatus,
         origin: 'loja_fisica',
         is_delivery: markAsDelivery,
         shipping_fee: shippingFee,
+        ...(couponApplied ? { coupon_code: couponApplied.code } : {}),
       });
-      const wasUnpaid = markAsUnpaid;
       const deliveryMsg = markAsDelivery ? ` + € ${shippingFeeValue.toFixed(2)} entrega` : '';
-      toast(
-        'success',
-        wasUnpaid
-          ? `Pedido #${res.data.orderId} criado como PENDENTE — stock reservado até confirmação.${deliveryMsg}`
-          : `Venda #${res.data.orderId} registada — € ${total.toFixed(2)}${deliveryMsg} (stock atualizado).`
-      );
+      const paidTotal = Number(res.data.total_amount ?? grandTotal);
+      const couponMsg = couponApplied ? ` · cupão ${couponApplied.code}` : '';
+
+      if (isStripe) {
+        try {
+          const stripeRes = await api.post<{ checkout_url: string }>(
+            `/${res.data.orderId}/stripe-checkout-session`,
+          );
+          const url = String(stripeRes.data.checkout_url || '').trim();
+          if (url && /^https:\/\//i.test(url)) {
+            window.open(url, '_blank', 'noopener,noreferrer');
+          }
+          toast(
+            'success',
+            `Pedido #${res.data.orderId} — link Stripe aberto. O estado passa a «pago» quando o cliente pagar (€ ${paidTotal.toFixed(2)}).${deliveryMsg}${couponMsg}`,
+          );
+        } catch (stripeErr: unknown) {
+          const stripeMsg =
+            (stripeErr as { response?: { data?: { error?: string } } })?.response?.data?.error;
+          toast(
+            'error',
+            stripeMsg
+              || `Pedido #${res.data.orderId} criado pendente, mas falhou o link Stripe. Usa «Abrir pagamento Stripe» no detalhe do pedido.${couponMsg}`,
+          );
+        }
+      } else {
+        const wasUnpaid = markAsUnpaid;
+        toast(
+          'success',
+          wasUnpaid
+            ? `Pedido #${res.data.orderId} criado como PENDENTE — stock reservado até confirmação.${deliveryMsg}${couponMsg}`
+            : `Venda #${res.data.orderId} registada — € ${paidTotal.toFixed(2)}${deliveryMsg}${couponMsg} (stock atualizado).`,
+        );
+      }
       setCart([]);
       setSelectedCustomer(null);
       setMarkAsUnpaid(false);
       setMarkAsDelivery(false);
+      setPaymentMethod('dinheiro');
       setShippingFeeValue(getDefaultShippingFeeEur());
+      setCouponInput('');
+      setCouponApplied(null);
       fetchVariants();
       setTimeout(() => onBack(), 800);
     } catch (err: any) {
@@ -1003,29 +1122,90 @@ function PDVPanel({
             ))}
           </div>
 
-          <div className="p-6 border-t border-gray-50 space-y-3">
+          <div className="p-4 border-t border-gray-50 space-y-2">
+            <label className="text-[10px] uppercase font-bold text-zinc-400 flex items-center gap-1">
+              <Tag size={12} /> Cupão
+            </label>
+            <p className="text-[10px] text-zinc-400">Se alterares quantidades ou artigos, volta a aplicar o cupão.</p>
             <div className="flex gap-2">
-              {(['dinheiro', 'mbway', 'cartao'] as const).map(m => (
+              <input
+                type="text"
+                value={couponInput}
+                onChange={e => { setCouponInput(e.target.value); setCouponError(null); }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); applyPdvCoupon(); } }}
+                disabled={cart.length === 0}
+                placeholder="Código…"
+                className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-black disabled:opacity-40"
+              />
+              <button
+                type="button"
+                onClick={applyPdvCoupon}
+                disabled={couponBusy || cart.length === 0}
+                className="px-4 py-2 rounded-xl bg-zinc-100 border border-gray-200 text-xs font-bold hover:bg-zinc-200 disabled:opacity-40"
+              >
+                {couponBusy ? '…' : 'Aplicar'}
+              </button>
+            </div>
+            {couponError && (
+              <p className="text-[11px] text-red-500 font-bold flex items-center gap-1">
+                <AlertCircle size={11} /> {couponError}
+              </p>
+            )}
+            {couponApplied && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-xs">
+                <span className="font-black text-emerald-800">{couponApplied.code}</span>
+                <span className="text-emerald-700 font-mono font-bold">
+                  − € {couponApplied.discount.toFixed(2)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { setCouponApplied(null); setCouponInput(''); setCouponError(null); }}
+                  className="ml-auto p-1 rounded-lg text-emerald-700 hover:bg-emerald-100"
+                  aria-label="Remover cupão"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="p-6 border-t border-gray-50 space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              {(['dinheiro', 'mbway', 'cartao', 'stripe'] as const).map(m => (
                 <button
                   key={m}
+                  type="button"
                   onClick={() => setPaymentMethod(m)}
-                  className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold uppercase ${
+                  className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase flex items-center justify-center gap-1.5 ${
                     paymentMethod === m ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-500'
                   }`}
                 >
-                  {m}
+                  {m === 'stripe' ? (
+                    <><CreditCard size={14} className="shrink-0" /> Stripe</>
+                  ) : (
+                    m
+                  )}
                 </button>
               ))}
             </div>
+            {paymentMethod === 'stripe' && (
+              <p className="text-[10px] text-zinc-500 leading-relaxed">
+                O pedido fica <strong>pendente</strong> até o pagamento online. Abre-se o Stripe com o valor exacto
+                (artigos, cupão e portes). Quando o cliente paga, o estado passa a <strong>pago</strong> automaticamente
+                (webhook ou regresso ao admin após pagamento).
+              </p>
+            )}
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-500 font-bold">Total</span>
-              <div className="text-right">
-                {markAsDelivery && (
-                  <p className="text-xs text-zinc-400 mb-1">
-                    Itens: € {(total - shippingFeeValue).toFixed(2)} + Entrega: € {shippingFeeValue.toFixed(2)}
+              <div className="text-right space-y-0.5">
+                {(couponDiscount >= 0.005 || markAsDelivery) && (
+                  <p className="text-[11px] text-zinc-400 font-medium max-w-[220px] ml-auto leading-relaxed">
+                    {`Subtotal € ${itemsSubtotal.toFixed(2)}`}
+                    {couponDiscount >= 0.005 ? ` · Cupão −€ ${couponDiscount.toFixed(2)}` : ''}
+                    {markAsDelivery ? ` · Entrega +€ ${shippingFeeValue.toFixed(2)}` : ''}
                   </p>
                 )}
-                <span className="text-2xl font-black font-mono">€ {total.toFixed(2)}</span>
+                <span className="text-2xl font-black font-mono">€ {grandTotal.toFixed(2)}</span>
               </div>
             </div>
 
@@ -1066,17 +1246,25 @@ function PDVPanel({
               </div>
             )}
 
-            <label className={`flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer border transition ${
-              markAsUnpaid ? 'bg-amber-50 border-amber-300' : 'bg-zinc-50 border-transparent hover:border-zinc-200'
+            <label className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition ${
+              paymentMethod === 'stripe'
+                ? 'opacity-50 cursor-not-allowed bg-zinc-50 border-zinc-100'
+                : markAsUnpaid
+                  ? 'bg-amber-50 border-amber-300 cursor-pointer'
+                  : 'bg-zinc-50 border-transparent hover:border-zinc-200 cursor-pointer'
             }`}>
               <input
                 type="checkbox"
                 checked={markAsUnpaid}
+                disabled={paymentMethod === 'stripe'}
                 onChange={e => setMarkAsUnpaid(e.target.checked)}
                 className="w-4 h-4 accent-amber-500"
               />
               <span className="text-xs font-bold text-zinc-700">
                 Marcar como <span className="text-amber-600">não paga</span>
+                {paymentMethod === 'stripe' && (
+                  <span className="text-zinc-400 font-normal normal-case"> (Stripe gere o pagamento)</span>
+                )}
               </span>
               <span className="ml-auto text-[10px] text-zinc-500">stock reservado</span>
             </label>
@@ -1085,18 +1273,22 @@ function PDVPanel({
               onClick={finalize}
               disabled={submitting || cart.length === 0 || !selectedCustomer}
               className={`w-full py-3 rounded-xl font-bold text-sm transition disabled:opacity-40 disabled:cursor-not-allowed ${
-                markAsUnpaid
-                  ? 'bg-amber-500 text-white hover:bg-amber-600'
-                  : 'bg-black text-white hover:bg-zinc-800'
+                paymentMethod === 'stripe'
+                  ? 'bg-violet-600 text-white hover:bg-violet-700'
+                  : markAsUnpaid
+                    ? 'bg-amber-500 text-white hover:bg-amber-600'
+                    : 'bg-black text-white hover:bg-zinc-800'
               }`}
             >
               {submitting
                 ? 'A registar...'
                 : !selectedCustomer
                   ? 'Selecione um cliente'
-                  : markAsUnpaid
-                    ? 'Criar Pedido Pendente'
-                    : 'Finalizar Venda'}
+                  : paymentMethod === 'stripe'
+                    ? 'Criar pedido e abrir Stripe'
+                    : markAsUnpaid
+                      ? 'Criar Pedido Pendente'
+                      : 'Finalizar Venda'}
             </button>
           </div>
         </div>
@@ -1833,6 +2025,7 @@ function OrderDetailsModal({
   const [reload, setReload] = useState(0);
   const [pickupBusy, setPickupBusy] = useState(false);
   const [collectBusy, setCollectBusy] = useState(false);
+  const [stripeLinkBusy, setStripeLinkBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -2081,6 +2274,40 @@ function OrderDetailsModal({
         )}
 
         <div className="p-4 border-t border-gray-50 flex flex-wrap items-center justify-end gap-2">
+          {order && !loading
+            && order.status === 'aguardando_pagamento'
+            && String(order.origin || '').trim().toLowerCase() === 'loja_fisica'
+            && String(order.payment_method || '').trim().toLowerCase() === 'stripe' && (
+            <button
+              type="button"
+              disabled={stripeLinkBusy}
+              title="Abre o Stripe Checkout num novo separador com o valor deste pedido"
+              onClick={async () => {
+                setStripeLinkBusy(true);
+                try {
+                  const stripeRes = await api.post<{ checkout_url: string }>(
+                    `/${order.id}/stripe-checkout-session`,
+                  );
+                  const url = String(stripeRes.data.checkout_url || '').trim();
+                  if (url && /^https:\/\//i.test(url)) {
+                    window.open(url, '_blank', 'noopener,noreferrer');
+                  }
+                  toast('success', 'Link Stripe aberto — o pedido passa a pago quando o pagamento for concluído.');
+                } catch (err: unknown) {
+                  const msg =
+                    (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+                    || 'Não foi possível gerar o link Stripe.';
+                  toast('error', msg);
+                } finally {
+                  setStripeLinkBusy(false);
+                }
+              }}
+              className="px-5 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {stripeLinkBusy ? <RefreshCw className="animate-spin" size={16} /> : <CreditCard size={16} />}
+              Abrir pagamento Stripe
+            </button>
+          )}
           {order && !loading && order.status === 'pago' && isWebsiteStorePickup(order) && onMarkPickupCollected && (
             <button
               type="button"
