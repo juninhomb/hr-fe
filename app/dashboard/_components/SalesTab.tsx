@@ -5,7 +5,7 @@ import {
   Clock, MessageCircle, Store, AlertCircle, Package, ArrowLeft,
   TrendingUp, Euro, Calendar, Filter, Eye, MoreHorizontal, Send,
   MapPin, Mail, Phone, StickyNote, PackageCheck, CheckCircle2,
-  Tag, CreditCard,
+  Tag, CreditCard, Copy, ExternalLink,
 } from 'lucide-react';
 import api from '../../../lib/api';
 import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
@@ -90,6 +90,149 @@ function isWebsiteStorePickup(o: Pick<Order, 'origin' | 'is_delivery'>): boolean
     || o.is_delivery === 1
     || o.is_delivery === '1';
   return orig === 'website' && !del;
+}
+
+type StripeLinkModalProps = {
+  open: boolean;
+  onClose: () => void;
+  orderId: number;
+  totalEur: number;
+  checkoutUrl: string;
+  /** Ex.: nome do cliente no PDV */
+  customerHint?: string | null;
+};
+
+/** Link Stripe gerado: mostra pedido pendente e URL para copiar (sem abrir separador sozinho). */
+function StripeCheckoutLinkModal({
+  open, onClose, orderId, totalEur, checkoutUrl, customerHint,
+}: StripeLinkModalProps) {
+  const [copied, setCopied] = useState(false);
+
+  const copyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(checkoutUrl);
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = checkoutUrl;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch {
+        return;
+      }
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  };
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-[2px] p-0 sm:p-4 animate-in fade-in"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        className="flex w-full max-w-md flex-col bg-white shadow-2xl sm:rounded-[28px] rounded-t-[28px] max-h-[min(92dvh,_640px)] overflow-hidden animate-in zoom-in-95"
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-labelledby="stripe-link-modal-title"
+      >
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-violet-100 text-violet-700">
+              <CreditCard size={18} aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <h3 id="stripe-link-modal-title" className="text-lg font-black tracking-tight leading-tight truncate">
+                Pedido #{orderId}
+              </h3>
+              <p className="text-[11px] font-bold text-amber-800 mt-0.5">
+                Aguardando pagamento (Stripe)
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 p-2 -m-1 hover:bg-zinc-100 rounded-xl transition"
+            aria-label="Fechar"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 space-y-3">
+          <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 text-xs text-amber-950 leading-snug">
+            O pedido fica pendente até o cliente concluir o pagamento neste link.
+            Pode enviar o URL por WhatsApp ou email ou usar «Abrir no separador» abaixo.
+          </div>
+
+          {customerHint?.trim() && (
+            <p className="text-[11px] text-zinc-500">
+              <span className="font-bold text-zinc-700">Cliente: </span>
+              {customerHint.trim()}
+            </p>
+          )}
+
+          <div className="rounded-xl bg-zinc-50 border border-gray-100 px-3 py-2.5">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-400">Total a cobrar</p>
+            <p className="mt-0.5 text-lg font-black tracking-tight font-mono">€ {totalEur.toFixed(2)}</p>
+          </div>
+
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">
+              Link do checkout (copiar)
+            </p>
+            <div className="flex gap-2">
+              <div className="flex-1 min-w-0 rounded-xl border border-gray-200 bg-white px-2.5 py-2 font-mono text-[11px] break-all max-h-28 overflow-y-auto text-zinc-800 select-text">
+                {checkoutUrl}
+              </div>
+              <button
+                type="button"
+                onClick={() => void copyUrl()}
+                className="shrink-0 inline-flex flex-col items-center justify-center gap-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-[11px] font-bold text-zinc-800 hover:bg-zinc-50 transition active:scale-[0.98]"
+                title="Copiar link"
+              >
+                <Copy size={18} />
+                Copiar
+              </button>
+            </div>
+            {copied && (
+              <p className="text-xs font-bold text-emerald-600 mt-2">Copiado para a área de transferência.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="shrink-0 border-t border-gray-100 bg-white px-4 py-3 space-y-2 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]">
+          <button
+            type="button"
+            onClick={() => {
+              window.open(checkoutUrl, '_blank', 'noopener,noreferrer');
+            }}
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold bg-violet-600 text-white hover:bg-violet-700 transition"
+          >
+            <ExternalLink size={16} aria-hidden /> Abrir no separador
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full px-4 py-2.5 rounded-full text-sm font-bold bg-zinc-100 text-zinc-800 hover:bg-zinc-200 transition"
+          >
+            Feito
+          </button>
+          <p className="text-[10px] text-zinc-400 text-center leading-snug">
+            O estado do pedido passa a «pago» automaticamente quando o Stripe confirmar o pagamento.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // =============================================================
@@ -791,6 +934,13 @@ function PDVPanel({
   const [couponBusy, setCouponBusy] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
 
+  const [stripePdvModal, setStripePdvModal] = useState<null | {
+    orderId: number;
+    totalAmount: number;
+    checkoutUrl: string;
+    customerHint: string | null;
+  }>(null);
+
   const fetchVariants = async (q = search) => {
     setLoading(true);
     try {
@@ -902,6 +1052,20 @@ function PDVPanel({
     }
   };
 
+  const finalizePdvAfterStripeModal = () => {
+    setStripePdvModal(null);
+    setCart([]);
+    setSelectedCustomer(null);
+    setMarkAsUnpaid(false);
+    setMarkAsDelivery(false);
+    setPaymentMethod('dinheiro');
+    setShippingFeeValue(getDefaultShippingFeeEur());
+    setCouponInput('');
+    setCouponApplied(null);
+    fetchVariants();
+    setTimeout(() => onBack(), 400);
+  };
+
   const finalize = async () => {
     if (submitting) return; // guard explícito contra duplo-click race
     if (cart.length === 0) {
@@ -933,6 +1097,9 @@ function PDVPanel({
       const paidTotal = Number(res.data.total_amount ?? grandTotal);
       const couponMsg = couponApplied ? ` · cupão ${couponApplied.code}` : '';
 
+      /** Só faz reset PDV / volta atrás quando não ficamos à espera do modal Stripe. */
+      let skipImmediatePdvReset = false;
+
       if (isStripe) {
         try {
           const stripeRes = await api.post<{ checkout_url: string }>(
@@ -940,19 +1107,34 @@ function PDVPanel({
           );
           const url = String(stripeRes.data.checkout_url || '').trim();
           if (url && /^https:\/\//i.test(url)) {
-            window.open(url, '_blank', 'noopener,noreferrer');
+            const hint =
+              selectedCustomer?.full_name?.trim()
+              || selectedCustomer?.whatsapp_number
+              || null;
+            setStripePdvModal({
+              orderId: res.data.orderId,
+              totalAmount: paidTotal,
+              checkoutUrl: url,
+              customerHint: hint,
+            });
+            skipImmediatePdvReset = true;
+            toast(
+              'success',
+              `Pedido #${res.data.orderId} — aguardando pagamento Stripe (€ ${paidTotal.toFixed(2)}). Usa o link no ecrã para copiar ou abrir.${deliveryMsg}${couponMsg}`,
+            );
+          } else {
+            toast(
+              'error',
+              `Pedido #${res.data.orderId} criado, mas o link Stripe é inválido. Gera novo link no detalhe do pedido.${couponMsg}`,
+            );
           }
-          toast(
-            'success',
-            `Pedido #${res.data.orderId} — link Stripe aberto. O estado passa a «pago» quando o cliente pagar (€ ${paidTotal.toFixed(2)}).${deliveryMsg}${couponMsg}`,
-          );
         } catch (stripeErr: unknown) {
           const stripeMsg =
             (stripeErr as { response?: { data?: { error?: string } } })?.response?.data?.error;
           toast(
             'error',
             stripeMsg
-              || `Pedido #${res.data.orderId} criado pendente, mas falhou o link Stripe. Usa «Abrir pagamento Stripe» no detalhe do pedido.${couponMsg}`,
+              || `Pedido #${res.data.orderId} criado pendente, mas falhou o link Stripe. Usa «Pagamento Stripe» no detalhe do pedido.${couponMsg}`,
           );
         }
       } else {
@@ -964,16 +1146,18 @@ function PDVPanel({
             : `Venda #${res.data.orderId} registada — € ${paidTotal.toFixed(2)}${deliveryMsg}${couponMsg} (stock atualizado).`,
         );
       }
-      setCart([]);
-      setSelectedCustomer(null);
-      setMarkAsUnpaid(false);
-      setMarkAsDelivery(false);
-      setPaymentMethod('dinheiro');
-      setShippingFeeValue(getDefaultShippingFeeEur());
-      setCouponInput('');
-      setCouponApplied(null);
-      fetchVariants();
-      setTimeout(() => onBack(), 800);
+      if (!skipImmediatePdvReset) {
+        setCart([]);
+        setSelectedCustomer(null);
+        setMarkAsUnpaid(false);
+        setMarkAsDelivery(false);
+        setPaymentMethod('dinheiro');
+        setShippingFeeValue(getDefaultShippingFeeEur());
+        setCouponInput('');
+        setCouponApplied(null);
+        fetchVariants();
+        setTimeout(() => onBack(), 800);
+      }
     } catch (err: any) {
       toast('error', err?.response?.data?.error || 'Erro ao registar venda');
     } finally {
@@ -1190,9 +1374,9 @@ function PDVPanel({
             </div>
             {paymentMethod === 'stripe' && (
               <p className="text-[10px] text-zinc-500 leading-relaxed">
-                O pedido fica <strong>pendente</strong> até o pagamento online. Abre-se o Stripe com o valor exacto
-                (artigos, cupão e portes). Quando o cliente paga, o estado passa a <strong>pago</strong> automaticamente
-                (webhook ou regresso ao admin após pagamento).
+                O pedido fica <strong>pendente</strong> até o pagamento online. Gera-se o link Stripe com o valor exacto
+                (artigos, cupão e portes): no ecrã seguinte podes <strong>copiar</strong> o URL ou abri-lo no separador.
+                Quando o cliente paga, o estado passa a <strong>pago</strong> automaticamente.
               </p>
             )}
             <div className="flex items-center justify-between">
@@ -1285,7 +1469,7 @@ function PDVPanel({
                 : !selectedCustomer
                   ? 'Selecione um cliente'
                   : paymentMethod === 'stripe'
-                    ? 'Criar pedido e abrir Stripe'
+                    ? 'Criar pedido Stripe'
                     : markAsUnpaid
                       ? 'Criar Pedido Pendente'
                       : 'Finalizar Venda'}
@@ -1293,6 +1477,15 @@ function PDVPanel({
           </div>
         </div>
       </div>
+
+      <StripeCheckoutLinkModal
+        open={stripePdvModal != null}
+        onClose={finalizePdvAfterStripeModal}
+        orderId={stripePdvModal?.orderId ?? 0}
+        totalEur={stripePdvModal?.totalAmount ?? 0}
+        checkoutUrl={stripePdvModal?.checkoutUrl ?? ''}
+        customerHint={stripePdvModal?.customerHint}
+      />
     </div>
   );
 }
@@ -2026,6 +2219,7 @@ function OrderDetailsModal({
   const [pickupBusy, setPickupBusy] = useState(false);
   const [collectBusy, setCollectBusy] = useState(false);
   const [stripeLinkBusy, setStripeLinkBusy] = useState(false);
+  const [stripeLinkUrl, setStripeLinkUrl] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -2056,10 +2250,11 @@ function OrderDetailsModal({
   }, [order]);
 
   return (
-    <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-in fade-in"
-      onClick={onClose}
-    >
+    <>
+      <div
+        className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-in fade-in"
+        onClick={onClose}
+      >
       <div
         onClick={e => e.stopPropagation()}
         className="bg-white rounded-[32px] w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95"
@@ -2281,7 +2476,7 @@ function OrderDetailsModal({
             <button
               type="button"
               disabled={stripeLinkBusy}
-              title="Abre o Stripe Checkout num novo separador com o valor deste pedido"
+              title="Gera sessão Stripe e mostra o link para copiar ou abrir num separador"
               onClick={async () => {
                 setStripeLinkBusy(true);
                 try {
@@ -2290,9 +2485,11 @@ function OrderDetailsModal({
                   );
                   const url = String(stripeRes.data.checkout_url || '').trim();
                   if (url && /^https:\/\//i.test(url)) {
-                    window.open(url, '_blank', 'noopener,noreferrer');
+                    setStripeLinkUrl(url);
+                    toast('success', `Link gerado — pedido #${order.id} aguarda pagamento Stripe. Copia o URL no ecrã.`);
+                  } else {
+                    toast('error', 'O Stripe devolveu um link inválido. Tenta novamente.');
                   }
-                  toast('success', 'Link Stripe aberto — o pedido passa a pago quando o pagamento for concluído.');
                 } catch (err: unknown) {
                   const msg =
                     (err as { response?: { data?: { error?: string } } })?.response?.data?.error
@@ -2305,7 +2502,7 @@ function OrderDetailsModal({
               className="px-5 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {stripeLinkBusy ? <RefreshCw className="animate-spin" size={16} /> : <CreditCard size={16} />}
-              Abrir pagamento Stripe
+              Pagamento Stripe
             </button>
           )}
           {order && !loading && order.status === 'pago' && isWebsiteStorePickup(order) && onMarkPickupCollected && (
@@ -2363,6 +2560,16 @@ function OrderDetailsModal({
           </button>
         </div>
       </div>
-    </div>
+      </div>
+
+      <StripeCheckoutLinkModal
+        open={Boolean(stripeLinkUrl)}
+        onClose={() => setStripeLinkUrl(null)}
+        orderId={orderId}
+        totalEur={Number(order?.total_amount ?? 0)}
+        checkoutUrl={stripeLinkUrl ?? ''}
+        customerHint={order?.full_name?.trim() || order?.whatsapp_number || null}
+      />
+    </>
   );
 }
