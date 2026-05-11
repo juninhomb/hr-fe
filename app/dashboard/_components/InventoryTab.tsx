@@ -18,6 +18,7 @@ type BaseProduct = {
   category_id: number | null;
   image_url: string | null;
   variant_count: number;
+  characteristics?: string | null;
 };
 type Category = { id: number; name: string };
 type CreateMode = 'new_product' | 'new_variant';
@@ -39,6 +40,7 @@ export default function InventoryTab() {
     name: '', base_price: '', sku: '', color: '', size: '', stock_quantity: '0',
     product_id: '' as string,
     category_id: '' as string,
+    characteristics: '',
   });
   const [categoryAuto, setCategoryAuto] = useState(true);  // sugestão automática ON por defeito
 
@@ -131,6 +133,7 @@ export default function InventoryTab() {
     setForm({
       name: '', base_price: '', sku: '', color: '', size: '', stock_quantity: '0',
       product_id: '', category_id: '',
+      characteristics: '',
     });
     setCategoryAuto(true);
     // Limpa ambas as zonas de imagem (produto e variante)
@@ -170,6 +173,7 @@ export default function InventoryTab() {
       stock_quantity: String(item.stock ?? 0),
       product_id: '',
       category_id: item.category_id != null ? String(item.category_id) : '',
+      characteristics: item.product_characteristics ?? item.characteristics ?? '',
     });
     setCategoryAuto(false);  // em edit não queremos sobrescrever a categoria já escolhida
     // Pré-popular as 2 zonas de imagem com os valores actuais
@@ -413,6 +417,7 @@ export default function InventoryTab() {
             stock_quantity: parseInt(form.stock_quantity) || 0,
             category_id: form.category_id ? parseInt(form.category_id, 10) : null,
             variant_is_active: true,
+            characteristics: form.characteristics.trim() || null,
           });
           productId = res.data?.product_id ?? null;
         } else {
@@ -457,6 +462,7 @@ export default function InventoryTab() {
           size: form.size.trim() || null,
           stock_quantity: parseInt(form.stock_quantity) || 0,
           category_id: form.category_id ? parseInt(form.category_id, 10) : null,
+          characteristics: form.characteristics.trim() || null,
         });
         productId = editingProduct.product_id ?? null;
       }
@@ -1169,6 +1175,22 @@ export default function InventoryTab() {
                       className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black font-mono"
                       placeholder="0.00"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">
+                      Características do produto
+                    </label>
+                    <textarea
+                      value={form.characteristics}
+                      onChange={e => setForm(f => ({ ...f, characteristics: e.target.value }))}
+                      rows={4}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black resize-y min-h-[88px] placeholder:text-zinc-400"
+                      placeholder="Ex.: Tecido leve, forro interior, lavagem a frio. Visível na página do produto no site."
+                    />
+                    <p className="text-[10px] text-zinc-400 mt-1">
+                      Opcional. Texto curto mostrado na loja entre os botões de compra e a informação de envio.
+                    </p>
                   </div>
                 </>
               )}
