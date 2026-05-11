@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import api from '../../../lib/api';
 import CategoriesSection from './CategoriesSection';
+import ColorsSection from './ColorsSection';
 import DiscountCouponsSection from './DiscountCouponsSection';
 
 type ShippingZone = {
@@ -140,6 +141,9 @@ export default function SettingsTab() {
     <div className="space-y-8">
       {/* Categorias do site (com upload de imagem) */}
       <CategoriesSection />
+
+      {/* Cores canónicas (inventário + site) */}
+      <ColorsSection />
 
       {/* Cupões de desconto (checkout site) */}
       <DiscountCouponsSection />

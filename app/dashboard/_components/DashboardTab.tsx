@@ -170,7 +170,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
           />
           <QuickStat
             icon={Send}
-            label="A enviar (CTT)"
+            label="A enviar (entrega)"
             value={String(stats?.to_ship_count ?? 0)}
             extra={stats ? `€ ${Number(stats.to_ship_value).toFixed(2)}` : '€ 0.00'}
             tone="blue"

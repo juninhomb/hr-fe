@@ -5,11 +5,12 @@ import {
   Clock, MessageCircle, Store, AlertCircle, Package, ArrowLeft,
   TrendingUp, Euro, Calendar, Filter, Eye, MoreHorizontal, Send,
   MapPin, Mail, Phone, StickyNote, PackageCheck, CheckCircle2,
-  Tag, CreditCard, Copy, ExternalLink,
+  Tag, CreditCard, Copy, ExternalLink, Printer,
 } from 'lucide-react';
 import api from '../../../lib/api';
 import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
 import { getDefaultShippingFeeEur } from '../../../lib/defaultShippingFee';
+import { expedicaoPrintPath, isHomeDeliveryOrder } from '../../../lib/orderDelivery';
 
 // =============================================================
 // Tipos
@@ -409,14 +410,42 @@ function OverviewPanel({
     }
   };
 
-  const handleShip = async (o: Order) => {
-    if (o.status !== 'pago') {
-      toast('error', 'Só pedidos pagos podem ser enviados.');
+  const handleMarkExpedited = async (o: Order) => {
+    if (o.status !== 'pago' || !isHomeDeliveryOrder(o)) {
+      toast('error', 'Só pedidos pagos com entrega podem ser expedidos.');
       return;
     }
     setActionId(o.id);
     try {
-      await api.post(`/${o.id}/ship`);
+      await api.post(`/${o.id}/mark-expedido`, {});
+      await fetchAll();
+      toast(
+        'success',
+        `Pedido #${o.id} ficou «Expedido». Abriu-se o recibo noutro separador para imprimir; aqui continuas no admin.`,
+      );
+      window.open(
+        expedicaoPrintPath(o.id, { kiosk: true }),
+        '_blank',
+        'noopener,noreferrer',
+      );
+    } catch (err: any) {
+      toast('error', err?.response?.data?.error || 'Erro ao marcar expedição');
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const handleShip = async (o: Order) => {
+    if (o.status !== 'expedido') {
+      toast(
+        'error',
+        'Marca primeiro «Expedir pedido» para passar a Expedido; depois regista o envio via CTT.',
+      );
+      return;
+    }
+    setActionId(o.id);
+    try {
+      await api.post(`/${o.id}/ship`, {});
       toast('success', `Pedido #${o.id} marcado como enviado (CTT).`);
       fetchAll();
     } catch (err: any) {
@@ -450,13 +479,17 @@ function OverviewPanel({
   const stats = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const todayOrders = history.filter(o => new Date(o.created_at) >= today);
-    const paidToday = todayOrders.filter(o => o.status === 'pago' || o.status === 'enviado' || o.status === 'entregue');
+    const paidToday = todayOrders.filter(o =>
+      o.status === 'pago' || o.status === 'expedido' || o.status === 'enviado' || o.status === 'entregue',
+    );
     const revenueToday = paidToday.reduce((a, o) => a + Number(o.total_amount || 0), 0);
     const totalRevenue = history
       .filter(o => o.status !== 'cancelado' && o.status !== 'aguardando_pagamento')
       .reduce((a, o) => a + Number(o.total_amount || 0), 0);
     const toShip = history.filter(
-      o => o.status === 'pago' && o.origin === 'whatsapp'
+      o =>
+        (o.status === 'pago' || o.status === 'expedido')
+        && isHomeDeliveryOrder(o),
     );
     return {
       todayCount: todayOrders.length,
@@ -493,7 +526,7 @@ function OverviewPanel({
         />
         <KpiCard
           icon={<Send size={18} />}
-          label="A enviar (CTT)"
+          label="A enviar (entrega)"
           value={String(stats.toShipCount)}
           tone={stats.toShipCount > 0 ? 'blue' : 'zinc'}
         />
@@ -546,6 +579,7 @@ function OverviewPanel({
           actionId={actionId}
           onConfirm={handleConfirm}
           onShip={handleShip}
+          onMarkExpedited={handleMarkExpedited}
           onPickupReady={handlePickupReady}
           onPickupCollected={handlePickupCollected}
           onDelete={handleDelete}
@@ -560,6 +594,8 @@ function OverviewPanel({
             toast={toast}
             onPickupNotified={fetchAll}
             onMarkPickupCollected={handlePickupCollected}
+            onMarkExpedited={handleMarkExpedited}
+            onShip={handleShip}
             onClose={() => setDetailsId(null)}
           />
         </ModalErrorBoundary>
@@ -649,6 +685,7 @@ function KpiCard({
 function statusBadge(status: string) {
   const map: Record<string, string> = {
     pago: 'bg-emerald-50 text-emerald-700',
+    expedido: 'bg-amber-50 text-amber-800',
     enviado: 'bg-blue-50 text-blue-700',
     entregue: 'bg-emerald-50 text-emerald-700',
     aguardando_pagamento: 'bg-amber-50 text-amber-700',
@@ -658,13 +695,14 @@ function statusBadge(status: string) {
 }
 
 function OrdersTable({
-  orders, loading, actionId, onConfirm, onShip, onPickupReady, onPickupCollected, onDelete, onView,
+  orders, loading, actionId, onConfirm, onShip, onMarkExpedited, onPickupReady, onPickupCollected, onDelete, onView,
 }: {
   orders: Order[];
   loading: boolean;
   actionId: number | null;
   onConfirm: (o: Order) => void;
   onShip: (o: Order) => void;
+  onMarkExpedited: (o: Order) => void;
   onPickupReady: (o: Order) => void;
   onPickupCollected: (o: Order) => void;
   onDelete: (o: Order) => void;
@@ -707,13 +745,14 @@ function OrdersTable({
           </thead>
           <tbody className="divide-y divide-gray-50">
             {orders.map(o => {
-              const needsShipping = o.status === 'pago' && o.origin === 'whatsapp';
+              const needsShippingRow =
+                (o.status === 'pago' || o.status === 'expedido') && isHomeDeliveryOrder(o);
               return (
               <tr
                 key={o.id}
                 onClick={() => onView(o)}
                 className={`transition cursor-pointer ${
-                  needsShipping
+                  needsShippingRow
                     ? 'bg-blue-50/60 hover:bg-blue-100/60 border-l-4 border-l-blue-500'
                     : 'hover:bg-gray-50/40'
                 }`}
@@ -762,10 +801,18 @@ function OrdersTable({
                         <CheckCircle2 size={9} /> Entregue
                       </span>
                     )}
-                    {needsShipping && (
+                    {needsShippingRow && o.status === 'pago' && (
                       <span
-                        title="Pago — pronto para enviar via CTT"
+                        title="Pago — falta expedir (imprimir recibo)"
                         className="text-[9px] font-black bg-blue-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1"
+                      >
+                        <Printer size={9} /> A expedir
+                      </span>
+                    )}
+                    {needsShippingRow && o.status === 'expedido' && (
+                      <span
+                        title="Expedido — registar envio via CTT"
+                        className="text-[9px] font-black bg-amber-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1"
                       >
                         <Send size={9} /> CTT
                       </span>
@@ -837,10 +884,22 @@ function OrdersTable({
             disabled={current.status !== 'aguardando_pagamento'}
             onClick={() => { setOpenMenu(null); onConfirm(current); }}
           />
-          {current.status === 'pago' && !isWebsiteStorePickup(current) && (
+          {current.status === 'pago' && isHomeDeliveryOrder(current) && (
+            <DropItem
+              icon={<Printer size={14} />}
+              label="Expedir pedido (imprimir)"
+              disabled={actionId === current.id}
+              onClick={() => {
+                setOpenMenu(null);
+                onMarkExpedited(current);
+              }}
+            />
+          )}
+          {current.status === 'expedido' && isHomeDeliveryOrder(current) && (
             <DropItem
               icon={<Send size={14} />}
               label="Enviar via CTT"
+              disabled={actionId === current.id}
               onClick={() => { setOpenMenu(null); onShip(current); }}
             />
           )}
@@ -1720,7 +1779,7 @@ function PendingOrdersPanel({
         )}
         {filtered.map(o => {
           const noItems = !o.items || o.items.length === 0;
-          const showFreightRow = (o.origin || '') === 'whatsapp' && !noItems;
+          const showFreightRow = isHomeDeliveryOrder(o) && !noItems;
           return (
             <div key={o.id} className="p-6 flex flex-col gap-4">
             <div className="flex flex-col md:flex-row gap-4 md:items-center">
@@ -1766,11 +1825,11 @@ function PendingOrdersPanel({
                   </div>
                 )}
 
-                {/* Bloco de envio CTT (só quando origem = whatsapp) */}
-                {o.origin === 'whatsapp' && (
+                {/* Morada de envio (pedidos com entrega: WhatsApp, site, PDV) */}
+                {isHomeDeliveryOrder(o) && (
                   <div className="mt-2 p-2 rounded-lg bg-blue-50/50 border border-blue-100 space-y-1">
                     <p className="text-[10px] uppercase font-black text-blue-700 flex items-center gap-1">
-                      <Send size={10} /> Dados de envio (CTT)
+                      <Send size={10} /> Dados de envio
                     </p>
                     <p className="text-[11px] text-zinc-600 flex items-center gap-1">
                       <Mail size={10} className="text-zinc-400" />
@@ -2204,13 +2263,16 @@ function CustomerCombobox({
 // OrderDetailsModal — visualização completa do pedido
 // =============================================================
 function OrderDetailsModal({
-  orderId, onClose, toast, onPickupNotified, onMarkPickupCollected,
+  orderId, onClose, toast, onPickupNotified, onMarkPickupCollected, onMarkExpedited, onShip,
 }: {
   orderId: number;
   onClose: () => void;
   toast: (t: 'success' | 'error', m: string) => void;
   onPickupNotified?: () => void;
   onMarkPickupCollected?: (o: Order) => Promise<void>;
+  onMarkExpedited?: (o: Order) => void | Promise<void>;
+  /** Marcar envio CTT (só com estado expedido). */
+  onShip?: (o: Order) => void | Promise<void>;
 }) {
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
@@ -2218,6 +2280,8 @@ function OrderDetailsModal({
   const [reload, setReload] = useState(0);
   const [pickupBusy, setPickupBusy] = useState(false);
   const [collectBusy, setCollectBusy] = useState(false);
+  const [shipBusy, setShipBusy] = useState(false);
+  const [expedirBusy, setExpedirBusy] = useState(false);
   const [stripeLinkBusy, setStripeLinkBusy] = useState(false);
   const [stripeLinkUrl, setStripeLinkUrl] = useState<string | null>(null);
 
@@ -2550,6 +2614,47 @@ function OrderDetailsModal({
             >
               {pickupBusy ? <RefreshCw className="animate-spin" size={16} /> : <PackageCheck size={16} />}
               Libertar p/ levantamento
+            </button>
+          )}
+          {order && !loading && order.status === 'pago' && isHomeDeliveryOrder(order) && onMarkExpedited && (
+            <button
+              type="button"
+              disabled={expedirBusy}
+              onClick={async () => {
+                setExpedirBusy(true);
+                try {
+                  await onMarkExpedited(order);
+                  setReload((k) => k + 1);
+                  onPickupNotified?.();
+                } finally {
+                  setExpedirBusy(false);
+                }
+              }}
+              className="px-5 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {expedirBusy ? <RefreshCw className="animate-spin" size={16} /> : <Printer size={16} />}
+              {expedirBusy ? 'A expedir…' : 'Expedir pedido (imprimir)'}
+            </button>
+          )}
+          {order && !loading && order.status === 'expedido' && isHomeDeliveryOrder(order) && onShip && (
+            <button
+              type="button"
+              disabled={shipBusy}
+              title="Depois de postar — marca como enviado"
+              onClick={async () => {
+                setShipBusy(true);
+                try {
+                  await onShip(order);
+                  setReload((k) => k + 1);
+                  onPickupNotified?.();
+                } finally {
+                  setShipBusy(false);
+                }
+              }}
+              className="px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {shipBusy ? <RefreshCw className="animate-spin" size={16} /> : <Send size={16} />}
+              Enviar via CTT
             </button>
           )}
           <button

@@ -21,6 +21,7 @@ type BaseProduct = {
   characteristics?: string | null;
 };
 type Category = { id: number; name: string };
+type CatalogColor = { id: number; name: string; sort_order: number };
 type CreateMode = 'new_product' | 'new_variant';
 
 export default function InventoryTab() {
@@ -37,7 +38,7 @@ export default function InventoryTab() {
   const [createMode, setCreateMode] = useState<CreateMode>('new_product');
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [form, setForm] = useState({
-    name: '', base_price: '', sku: '', color: '', size: '', stock_quantity: '0',
+    name: '', base_price: '', sku: '', color_id: '' as string, size: '', stock_quantity: '0',
     product_id: '' as string,
     category_id: '' as string,
     characteristics: '',
@@ -59,6 +60,7 @@ export default function InventoryTab() {
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
   const [baseProducts, setBaseProducts] = useState<BaseProduct[]>([]);
+  const [catalogColors, setCatalogColors] = useState<CatalogColor[]>([]);
 
   const [openMenu, setOpenMenu] = useState<{ id: string; menuStyle: React.CSSProperties } | null>(null);
   const [deletingProduct, setDeletingProduct] = useState<any>(null);
@@ -94,7 +96,16 @@ export default function InventoryTab() {
     }
   };
 
-  useEffect(() => { fetchProducts(); fetchCategories(); }, []);
+  const fetchCatalogColors = async () => {
+    try {
+      const res = await api.get<CatalogColor[]>('/colors');
+      setCatalogColors(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      setCatalogColors([]);
+    }
+  };
+
+  useEffect(() => { fetchProducts(); fetchCategories(); fetchCatalogColors(); }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => fetchProducts(search), 350);
@@ -131,7 +142,7 @@ export default function InventoryTab() {
 
   const resetForm = () => {
     setForm({
-      name: '', base_price: '', sku: '', color: '', size: '', stock_quantity: '0',
+      name: '', base_price: '', sku: '', color_id: '', size: '', stock_quantity: '0',
       product_id: '', category_id: '',
       characteristics: '',
     });
@@ -161,14 +172,29 @@ export default function InventoryTab() {
     setCreateMode('new_product');
     setModalMode('create');
     api.get('/products/base').then(r => setBaseProducts(r.data || [])).catch(() => {});
+    fetchCatalogColors();
   };
 
-  const openEditModal = (item: any) => {
+  const openEditModal = async (item: any) => {
+    let colors = catalogColors;
+    try {
+      const res = await api.get<CatalogColor[]>('/colors');
+      colors = Array.isArray(res.data) ? res.data : [];
+      setCatalogColors(colors);
+    } catch {
+      /* mantém cache */
+    }
+    let cid = item.color_id != null && item.color_id !== '' ? String(item.color_id) : '';
+    if (!cid && item.color && colors.length) {
+      const nm = String(item.color).trim().toLowerCase();
+      const m = colors.find((x) => x.name.trim().toLowerCase() === nm);
+      if (m) cid = String(m.id);
+    }
     setForm({
       name: item.name || '',
       base_price: String(item.price || ''),
       sku: item.sku || '',
-      color: item.color || '',
+      color_id: cid,
       size: item.size || '',
       stock_quantity: String(item.stock ?? 0),
       product_id: '',
@@ -190,6 +216,11 @@ export default function InventoryTab() {
   };
 
   // Detecta SKU duplicado em tempo real (avisa antes do submit)
+  const selectedColorName = useMemo(
+    () => catalogColors.find((c) => String(c.id) === form.color_id)?.name ?? '',
+    [catalogColors, form.color_id],
+  );
+
   const skuConflict = useMemo(() => {
     if (modalMode !== 'create' || !form.sku.trim()) return false;
     const skuUp = form.sku.trim().toUpperCase();
@@ -401,6 +432,16 @@ export default function InventoryTab() {
       return;
     }
 
+    let resolvedColorId: number | null = null;
+    if (form.color_id && String(form.color_id).trim() !== '') {
+      const n = parseInt(form.color_id, 10);
+      if (!Number.isFinite(n)) {
+        setFormError('Cor inválida.');
+        return;
+      }
+      resolvedColorId = n;
+    }
+
     setSaving(true);
     try {
       let productId: number | null = null;
@@ -412,7 +453,7 @@ export default function InventoryTab() {
             name: form.name.trim(),
             base_price: parseFloat(form.base_price) || 0,
             sku: form.sku.trim().toUpperCase(),
-            color: form.color.trim() || null,
+            color_id: resolvedColorId,
             size: form.size.trim() || null,
             stock_quantity: parseInt(form.stock_quantity) || 0,
             category_id: form.category_id ? parseInt(form.category_id, 10) : null,
@@ -429,7 +470,7 @@ export default function InventoryTab() {
           // Cria a variante
           const res = await api.post(`/products/${form.product_id}/variants`, {
             sku: form.sku.trim().toUpperCase(),
-            color: form.color.trim() || null,
+            color_id: resolvedColorId,
             size: form.size.trim() || null,
             stock_quantity: parseInt(form.stock_quantity) || 0,
             is_active: true,
@@ -458,7 +499,7 @@ export default function InventoryTab() {
         await api.put(`/products/${editingProduct.sku}`, {
           name: form.name.trim(),
           base_price: parseFloat(form.base_price) || 0,
-          color: form.color.trim() || null,
+          color_id: resolvedColorId,
           size: form.size.trim() || null,
           stock_quantity: parseInt(form.stock_quantity) || 0,
           category_id: form.category_id ? parseInt(form.category_id, 10) : null,
@@ -1028,7 +1069,7 @@ export default function InventoryTab() {
               {modalMode === 'edit' && (
                 <div className="rounded-2xl bg-amber-50/40 border border-amber-200/60 p-4 space-y-3">
                   <ImageZone
-                    title={`Imagem desta variante (${form.color || '—'} · ${form.size || '—'})`}
+                    title={`Imagem desta variante (${selectedColorName || '—'} · ${form.size || '—'})`}
                     hint={
                       variantImagePreview
                         ? 'Esta foto sobrepõe-se à do produto-base só para esta variante.'
@@ -1045,7 +1086,7 @@ export default function InventoryTab() {
                     )}
                   />
                   {/* Aplicar a todas as variantes da mesma cor (atalho útil) */}
-                  {variantImageFile && form.color && (
+                  {variantImageFile && selectedColorName && (
                     <label className="flex items-start gap-2 cursor-pointer text-[11px] text-amber-900">
                       <input
                         type="checkbox"
@@ -1054,7 +1095,7 @@ export default function InventoryTab() {
                         className="accent-amber-600 mt-0.5"
                       />
                       <span>
-                        <strong>Aplicar a todas as variantes da cor &quot;{form.color}&quot;</strong> deste
+                        <strong>Aplicar a todas as variantes da cor &quot;{selectedColorName}&quot;</strong> deste
                         produto (útil porque tipicamente foto varia por cor, não por tamanho).
                       </span>
                     </label>
@@ -1066,7 +1107,7 @@ export default function InventoryTab() {
               {modalMode === 'create' && createMode === 'new_variant' && (
                 <div className="rounded-2xl bg-amber-50/40 border border-amber-200/60 p-4 space-y-3">
                   <ImageZone
-                    title={`Imagem desta variante (${form.color || '—'} · ${form.size || '—'})`}
+                    title={`Imagem desta variante (${selectedColorName || '—'} · ${form.size || '—'})`}
                     hint={
                       variantImagePreview
                         ? 'Esta foto sobrepõe-se à do produto-base só para esta variante.'
@@ -1083,7 +1124,7 @@ export default function InventoryTab() {
                     )}
                   />
                   {/* Aplicar a todas as variantes da mesma cor (atalho útil) */}
-                  {variantImageFile && form.color && (
+                  {variantImageFile && selectedColorName && (
                     <label className="flex items-start gap-2 cursor-pointer text-[11px] text-amber-900">
                       <input
                         type="checkbox"
@@ -1092,7 +1133,7 @@ export default function InventoryTab() {
                         className="accent-amber-600 mt-0.5"
                       />
                       <span>
-                        <strong>Aplicar a todas as variantes da cor &quot;{form.color}&quot;</strong> deste
+                        <strong>Aplicar a todas as variantes da cor &quot;{selectedColorName}&quot;</strong> deste
                         produto (útil porque tipicamente foto varia por cor, não por tamanho).
                       </span>
                     </label>
@@ -1220,13 +1261,22 @@ export default function InventoryTab() {
               {/* Cor + Tamanho */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Cor</label>
-                  <input
-                    value={form.color}
-                    onChange={e => setForm(f => ({ ...f, color: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black uppercase"
-                    placeholder="Ex: PRETO"
-                  />
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">
+                    Cor (opcional)
+                  </label>
+                  <select
+                    value={form.color_id}
+                    onChange={(e) => setForm((f) => ({ ...f, color_id: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black bg-white"
+                  >
+                    <option value="">— Sem cor (ex.: calça, só tamanho) —</option>
+                    {catalogColors.map((c) => (
+                      <option key={c.id} value={String(c.id)}>{c.name}</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-zinc-400 mt-1">
+                    Opcional. Gerir lista em Configurações → Cores.
+                  </p>
                 </div>
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Tamanho</label>
