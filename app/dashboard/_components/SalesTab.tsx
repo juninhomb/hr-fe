@@ -12,6 +12,9 @@ import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
 import { getDefaultShippingFeeEur } from '../../../lib/defaultShippingFee';
 import { expedicaoPrintPath, isHomeDeliveryOrder } from '../../../lib/orderDelivery';
 
+/** Cypress Ship2U pode demorar vários minutos — maior que o default do axios e alinhado com SHIP2U_CYPRESS_TIMEOUT_MS no backend. */
+const SHIP2U_CYPRESS_HTTP_TIMEOUT_MS = 650_000;
+
 // =============================================================
 // Tipos
 // =============================================================
@@ -339,6 +342,8 @@ function OverviewPanel({
   const [pending, setPending] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState<number | null>(null);
+  /** Durante o POST Ship2U (espera pelo Cypress no servidor). */
+  const [ship2uBusyOrderId, setShip2uBusyOrderId] = useState<number | null>(null);
   const [detailsId, setDetailsId] = useState<number | null>(null);
 
   const fetchAll = async () => {
@@ -415,19 +420,64 @@ function OverviewPanel({
       toast('error', 'Só pedidos pagos com entrega podem ser expedidos.');
       return;
     }
+
     setActionId(o.id);
     try {
-      await api.post(`/${o.id}/mark-expedido`, {});
+      const expedRes = await api.post<{ already?: boolean }>(
+        `/${o.id}/mark-expedido`,
+        {},
+      );
       await fetchAll();
+
+      const path = expedicaoPrintPath(o.id, { kiosk: true });
+      const absUrl =
+        typeof window !== 'undefined'
+          ? `${window.location.origin}${path.startsWith('/') ? '' : '/'}${path}`
+          : path;
+
+      // Nova aba / separador (sem dimensões — não é janela popup).
+      window.open(absUrl, '_blank', 'noopener,noreferrer');
+
       toast(
         'success',
-        `Pedido #${o.id} ficou «Expedido». Abriu-se o recibo noutro separador para imprimir; aqui continuas no admin.`,
+        `Pedido #${o.id} ficou «Expedido». O romaneio abriu numa nova aba para impressão.`,
       );
-      window.open(
-        expedicaoPrintPath(o.id, { kiosk: true }),
-        '_blank',
-        'noopener,noreferrer',
-      );
+
+      if (!expedRes.data?.already) {
+        setShip2uBusyOrderId(o.id);
+        try {
+          const ship2uRes = await api.post<{
+            skipped?: boolean;
+            success?: boolean;
+          }>(`/${o.id}/ship2u-cypress`, {}, {
+            timeout: SHIP2U_CYPRESS_HTTP_TIMEOUT_MS,
+          });
+          if (!ship2uRes.data?.skipped && ship2uRes.data?.success !== false) {
+            toast(
+              'success',
+              `Pedido #${o.id}: Ship2U — o fluxo no browser terminou e o formulário fechou (Cypress). Confirma na Ship2U que o envio aparece na lista.`,
+            );
+          }
+        } catch (ship2uErr: any) {
+          const data = ship2uErr?.response?.data;
+          let detail =
+            data?.error
+            || (ship2uErr?.code === 'ECONNABORTED'
+              ? 'Tempo esgotado à espera do Cypress no servidor.'
+              : ship2uErr?.message)
+            || 'Falha na automação Ship2U.';
+          if (data?.logTail && typeof data.logTail === 'string') {
+            const tail = data.logTail.trim().slice(-800);
+            console.error('[Ship2U Cypress log]', tail);
+          }
+          toast(
+            'error',
+            `Pedido expedido e recibo enviado, mas o Ship2U falhou: ${detail}`,
+          );
+        } finally {
+          setShip2uBusyOrderId(null);
+        }
+      }
     } catch (err: any) {
       toast('error', err?.response?.data?.error || 'Erro ao marcar expedição');
     } finally {
@@ -503,6 +553,19 @@ function OverviewPanel({
 
   return (
     <div className="space-y-6">
+      {ship2uBusyOrderId !== null && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="rounded-2xl border border-blue-200 bg-blue-50 text-blue-950 px-4 py-3 flex items-start gap-3 shadow-sm"
+        >
+          <RefreshCw className="animate-spin shrink-0 mt-0.5" size={20} aria-hidden />
+          <div className="text-sm font-semibold leading-snug">
+            Pedido #{ship2uBusyOrderId}: automação Ship2U em execução no servidor (Cypress). Pode demorar vários
+            minutos — mantém esta página aberta até aparecer a mensagem de conclusão ou erro.
+          </div>
+        </div>
+      )}
       {/* KPI cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <KpiCard
@@ -2666,7 +2729,7 @@ function OrderDetailsModal({
               className="px-5 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {expedirBusy ? <RefreshCw className="animate-spin" size={16} /> : <Printer size={16} />}
-              {expedirBusy ? 'A expedir…' : 'Expedir pedido (imprimir)'}
+              {expedirBusy ? 'A expedir e a correr Ship2U…' : 'Expedir pedido (imprimir)'}
             </button>
           )}
           {order && !loading && order.status === 'expedido' && isHomeDeliveryOrder(order) && onShip && (
