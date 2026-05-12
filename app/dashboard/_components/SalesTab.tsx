@@ -5,7 +5,7 @@ import {
   Clock, MessageCircle, Store, AlertCircle, Package, ArrowLeft,
   TrendingUp, Euro, Calendar, Filter, Eye, MoreHorizontal, Send,
   MapPin, Mail, Phone, StickyNote, PackageCheck, CheckCircle2,
-  Tag, CreditCard, Copy, ExternalLink, Printer,
+  Tag, CreditCard, Copy, ExternalLink, Printer, Bot,
 } from 'lucide-react';
 import api from '../../../lib/api';
 import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
@@ -415,6 +415,12 @@ function OverviewPanel({
     }
   };
 
+  /**
+   * Entrega ao domicílio — fluxo em etapas (só um passo altera estado de cada vez):
+   * 1) Pago → «Expedir pedido»: marca expedido + imprime romaneio (não chama Ship2U).
+   * 2) Expedido → «Ship2U»: Cypress na plataforma (não muda estado no HR Store).
+   * 3) Expedido → «Enviar via CTT»: confirma envio após postar (muda para enviado).
+   */
   const handleMarkExpedited = async (o: Order) => {
     if (o.status !== 'pago' || !isHomeDeliveryOrder(o)) {
       toast('error', 'Só pedidos pagos com entrega podem ser expedidos.');
@@ -423,10 +429,7 @@ function OverviewPanel({
 
     setActionId(o.id);
     try {
-      const expedRes = await api.post<{ already?: boolean }>(
-        `/${o.id}/mark-expedido`,
-        {},
-      );
+      await api.post(`/${o.id}/mark-expedido`, {});
       await fetchAll();
 
       const path = expedicaoPrintPath(o.id, { kiosk: true });
@@ -440,44 +443,8 @@ function OverviewPanel({
 
       toast(
         'success',
-        `Pedido #${o.id} ficou «Expedido». O romaneio abriu numa nova aba para impressão.`,
+        `Pedido #${o.id} ficou «Expedido». Romaneio numa nova aba. Próximo: no menu ⋯ usa «Ship2U» se quiseres; quando postares, «Enviar via CTT».`,
       );
-
-      if (!expedRes.data?.already) {
-        setShip2uBusyOrderId(o.id);
-        try {
-          const ship2uRes = await api.post<{
-            skipped?: boolean;
-            success?: boolean;
-          }>(`/${o.id}/ship2u-cypress`, {}, {
-            timeout: SHIP2U_CYPRESS_HTTP_TIMEOUT_MS,
-          });
-          if (!ship2uRes.data?.skipped && ship2uRes.data?.success !== false) {
-            toast(
-              'success',
-              `Pedido #${o.id}: Ship2U — o fluxo no browser terminou e o formulário fechou (Cypress). Confirma na Ship2U que o envio aparece na lista.`,
-            );
-          }
-        } catch (ship2uErr: any) {
-          const data = ship2uErr?.response?.data;
-          let detail =
-            data?.error
-            || (ship2uErr?.code === 'ECONNABORTED'
-              ? 'Tempo esgotado à espera do Cypress no servidor.'
-              : ship2uErr?.message)
-            || 'Falha na automação Ship2U.';
-          if (data?.logTail && typeof data.logTail === 'string') {
-            const tail = data.logTail.trim().slice(-800);
-            console.error('[Ship2U Cypress log]', tail);
-          }
-          toast(
-            'error',
-            `Pedido expedido e recibo enviado, mas o Ship2U falhou: ${detail}`,
-          );
-        } finally {
-          setShip2uBusyOrderId(null);
-        }
-      }
     } catch (err: any) {
       toast('error', err?.response?.data?.error || 'Erro ao marcar expedição');
     } finally {
@@ -485,11 +452,61 @@ function OverviewPanel({
     }
   };
 
+  const handleRunShip2uCypress = async (o: Order) => {
+    if (!isHomeDeliveryOrder(o)) {
+      toast('error', 'Ship2U só se aplica a pedidos com entrega ao domicílio.');
+      return;
+    }
+    if (o.status !== 'expedido') {
+      toast(
+        'error',
+        'Com estado «Pago», usa primeiro «Expedir pedido» (romaneio). Só depois, com «Expedido», aparece «Ship2U».',
+      );
+      return;
+    }
+
+    setShip2uBusyOrderId(o.id);
+    try {
+      const ship2uRes = await api.post<{
+        skipped?: boolean;
+        success?: boolean;
+        reason?: string;
+      }>(`/${o.id}/ship2u-cypress`, {}, {
+        timeout: SHIP2U_CYPRESS_HTTP_TIMEOUT_MS,
+      });
+      if (!ship2uRes.data?.skipped && ship2uRes.data?.success !== false) {
+        toast(
+          'success',
+          `Pedido #${o.id}: Ship2U — automação no servidor concluída. Confirma na Ship2U que o envio aparece na lista.`,
+        );
+      } else if (ship2uRes.data?.skipped && ship2uRes.data?.reason) {
+        toast('success', ship2uRes.data.reason);
+      }
+    } catch (ship2uErr: any) {
+      const data = ship2uErr?.response?.data;
+      const detail =
+        data?.error
+        || (ship2uErr?.code === 'ECONNABORTED'
+          ? 'Tempo esgotado à espera do Cypress no servidor.'
+          : ship2uErr?.message)
+        || 'Falha na automação Ship2U.';
+      if (data?.logTail && typeof data.logTail === 'string') {
+        const tail = data.logTail.trim().slice(-800);
+        console.error('[Ship2U Cypress log]', tail);
+      }
+      toast('error', `Ship2U: ${detail}`);
+    } finally {
+      setShip2uBusyOrderId(null);
+    }
+  };
+
   const handleShip = async (o: Order) => {
     if (o.status !== 'expedido') {
       toast(
         'error',
-        'Marca primeiro «Expedir pedido» para passar a Expedido; depois regista o envio via CTT.',
+        isHomeDeliveryOrder(o)
+          ? 'Fluxo entrega: primeiro «Expedir pedido» (fica expedido + romaneio); opcionalmente «Ship2U»; com pacote postado, «Enviar via CTT».'
+          : 'Marca primeiro «Expedir pedido» para passar a Expedido; depois regista o envio via CTT.',
       );
       return;
     }
@@ -561,7 +578,7 @@ function OverviewPanel({
         >
           <RefreshCw className="animate-spin shrink-0 mt-0.5" size={20} aria-hidden />
           <div className="text-sm font-semibold leading-snug">
-            Pedido #{ship2uBusyOrderId}: automação Ship2U em execução no servidor (Cypress). Pode demorar vários
+            Pedido #{ship2uBusyOrderId}: automação Ship2U em execução no servidor. Pode demorar vários
             minutos — mantém esta página aberta até aparecer a mensagem de conclusão ou erro.
           </div>
         </div>
@@ -640,9 +657,11 @@ function OverviewPanel({
           orders={history.slice(0, 80)}
           loading={loading}
           actionId={actionId}
+          ship2uBusyOrderId={ship2uBusyOrderId}
           onConfirm={handleConfirm}
           onShip={handleShip}
           onMarkExpedited={handleMarkExpedited}
+          onRunShip2uCypress={handleRunShip2uCypress}
           onPickupReady={handlePickupReady}
           onPickupCollected={handlePickupCollected}
           onDelete={handleDelete}
@@ -655,9 +674,11 @@ function OverviewPanel({
           <OrderDetailsModal
             orderId={detailsId}
             toast={toast}
+            ship2uBusyOrderId={ship2uBusyOrderId}
             onPickupNotified={fetchAll}
             onMarkPickupCollected={handlePickupCollected}
             onMarkExpedited={handleMarkExpedited}
+            onRunShip2uCypress={handleRunShip2uCypress}
             onShip={handleShip}
             onClose={() => setDetailsId(null)}
           />
@@ -758,14 +779,16 @@ function statusBadge(status: string) {
 }
 
 function OrdersTable({
-  orders, loading, actionId, onConfirm, onShip, onMarkExpedited, onPickupReady, onPickupCollected, onDelete, onView,
+  orders, loading, actionId, ship2uBusyOrderId, onConfirm, onShip, onMarkExpedited, onRunShip2uCypress, onPickupReady, onPickupCollected, onDelete, onView,
 }: {
   orders: Order[];
   loading: boolean;
   actionId: number | null;
+  ship2uBusyOrderId: number | null;
   onConfirm: (o: Order) => void;
   onShip: (o: Order) => void;
   onMarkExpedited: (o: Order) => void;
+  onRunShip2uCypress: (o: Order) => void | Promise<void>;
   onPickupReady: (o: Order) => void;
   onPickupCollected: (o: Order) => void;
   onDelete: (o: Order) => void;
@@ -951,6 +974,7 @@ function OrdersTable({
             <DropItem
               icon={<Printer size={14} />}
               label="Expedir pedido (imprimir)"
+              title="Passa o pedido a «Expedido» e abre o romaneio. Ship2U e CTT só ficam disponíveis no passo seguinte."
               disabled={actionId === current.id}
               onClick={() => {
                 setOpenMenu(null);
@@ -959,12 +983,25 @@ function OrdersTable({
             />
           )}
           {current.status === 'expedido' && isHomeDeliveryOrder(current) && (
-            <DropItem
-              icon={<Send size={14} />}
-              label="Enviar via CTT"
-              disabled={actionId === current.id}
-              onClick={() => { setOpenMenu(null); onShip(current); }}
-            />
+            <>
+              <DropItem
+                icon={<Bot size={14} />}
+                label="Ship2U"
+                title="Automação na plataforma Ship2U. Não altera o estado do pedido no HR Store."
+                disabled={actionId === current.id || ship2uBusyOrderId === current.id}
+                onClick={() => {
+                  setOpenMenu(null);
+                  void onRunShip2uCypress(current);
+                }}
+              />
+              <DropItem
+                icon={<Send size={14} />}
+                label="Enviar via CTT"
+                title="Usa depois de postares o pacote. Marca o pedido como enviado."
+                disabled={actionId === current.id || ship2uBusyOrderId === current.id}
+                onClick={() => { setOpenMenu(null); onShip(current); }}
+              />
+            </>
           )}
           {current.status === 'pago' && isWebsiteStorePickup(current) && (
             <>
@@ -997,7 +1034,7 @@ function OrdersTable({
 }
 
 function DropItem({
-  icon, label, onClick, disabled, danger, badge,
+  icon, label, onClick, disabled, danger, badge, title,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -1005,9 +1042,12 @@ function DropItem({
   disabled?: boolean;
   danger?: boolean;
   badge?: string;
+  title?: string;
 }) {
   return (
     <button
+      type="button"
+      title={title}
       onClick={onClick}
       disabled={disabled}
       className={`w-full text-left px-3 py-2 flex items-center gap-2 text-xs font-bold transition ${
@@ -2356,14 +2396,17 @@ function CustomerCombobox({
 // OrderDetailsModal — visualização completa do pedido
 // =============================================================
 function OrderDetailsModal({
-  orderId, onClose, toast, onPickupNotified, onMarkPickupCollected, onMarkExpedited, onShip,
+  orderId, onClose, toast, ship2uBusyOrderId, onPickupNotified, onMarkPickupCollected, onMarkExpedited, onRunShip2uCypress, onShip,
 }: {
   orderId: number;
   onClose: () => void;
   toast: (t: 'success' | 'error', m: string) => void;
+  ship2uBusyOrderId?: number | null;
   onPickupNotified?: () => void;
   onMarkPickupCollected?: (o: Order) => Promise<void>;
   onMarkExpedited?: (o: Order) => void | Promise<void>;
+  /** Automação Ship2U no servidor (Cypress); só pedidos expedidos com entrega. */
+  onRunShip2uCypress?: (o: Order) => void | Promise<void>;
   /** Marcar envio CTT (só com estado expedido). */
   onShip?: (o: Order) => void | Promise<void>;
 }) {
@@ -2375,6 +2418,7 @@ function OrderDetailsModal({
   const [collectBusy, setCollectBusy] = useState(false);
   const [shipBusy, setShipBusy] = useState(false);
   const [expedirBusy, setExpedirBusy] = useState(false);
+  const [ship2uCypressBusy, setShip2uCypressBusy] = useState(false);
   const [stripeLinkBusy, setStripeLinkBusy] = useState(false);
   const [stripeLinkUrl, setStripeLinkUrl] = useState<string | null>(null);
 
@@ -2716,6 +2760,7 @@ function OrderDetailsModal({
             <button
               type="button"
               disabled={expedirBusy}
+              title="Passa a «Expedido», abre o romaneio. Ship2U e CTT aparecem só depois deste passo."
               onClick={async () => {
                 setExpedirBusy(true);
                 try {
@@ -2729,14 +2774,35 @@ function OrderDetailsModal({
               className="px-5 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {expedirBusy ? <RefreshCw className="animate-spin" size={16} /> : <Printer size={16} />}
-              {expedirBusy ? 'A expedir e a correr Ship2U…' : 'Expedir pedido (imprimir)'}
+              {expedirBusy ? 'A expedir…' : 'Expedir pedido (imprimir)'}
+            </button>
+          )}
+          {order && !loading && order.status === 'expedido' && isHomeDeliveryOrder(order) && onRunShip2uCypress && (
+            <button
+              type="button"
+              disabled={ship2uCypressBusy || ship2uBusyOrderId === order.id}
+              title="Automação Ship2U no servidor. Não muda o estado do pedido aqui; depois de postar usa «Enviar via CTT»."
+              onClick={async () => {
+                setShip2uCypressBusy(true);
+                try {
+                  await onRunShip2uCypress(order);
+                  setReload((k) => k + 1);
+                  onPickupNotified?.();
+                } finally {
+                  setShip2uCypressBusy(false);
+                }
+              }}
+              className="px-5 py-2.5 rounded-xl bg-slate-800 text-white text-sm font-bold hover:bg-slate-900 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {ship2uCypressBusy ? <RefreshCw className="animate-spin" size={16} /> : <Bot size={16} />}
+              {ship2uCypressBusy ? 'Ship2U em execução…' : 'Ship2U'}
             </button>
           )}
           {order && !loading && order.status === 'expedido' && isHomeDeliveryOrder(order) && onShip && (
             <button
               type="button"
               disabled={shipBusy}
-              title="Depois de postar — marca como enviado"
+              title="Depois de postar o pacote — marca como enviado (CTT)."
               onClick={async () => {
                 setShipBusy(true);
                 try {
