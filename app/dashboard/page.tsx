@@ -42,7 +42,7 @@ export default function DashboardPage() {
   if (!mounted) return null;
 
   return (
-    <div className="flex min-h-screen bg-[#F8F9FA] text-slate-900 font-sans">
+    <div className="flex min-h-screen bg-[#F8F9FA] text-slate-900 font-sans md:min-h-0 md:h-screen md:overflow-hidden">
       {/* Sidebar */}
       <aside className="w-64 bg-black text-white p-6 flex flex-col hidden md:flex shrink-0">
         <div className="mb-10">
@@ -68,19 +68,22 @@ export default function DashboardPage() {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 p-4 md:p-10 overflow-y-auto">
-        <header className="flex justify-between items-center mb-10">
+      {/* Uma zona de scroll: tabs longos (PDV com Stripe) já não combinam segundo scroll dentro do carrinho. */}
+      <main className="flex flex-1 flex-col min-w-0 min-h-0 overflow-hidden">
+        <header className="shrink-0 flex justify-between items-center px-4 md:px-10 pt-4 md:pt-10 pb-4">
           <div>
             <h2 className="text-3xl font-bold tracking-tight">{TAB_LABELS[activeTab] ?? activeTab}</h2>
           </div>
           <ProfileMenu />
         </header>
 
-        {activeTab === 'dashboard' && <DashboardTab onNavigate={setActiveTab} />}
-        {activeTab === 'inventory' && <InventoryTab />}
-        {activeTab === 'sales' && <SalesTab />}
-        {activeTab === 'customers' && <CustomersTab />}
-        {activeTab === 'settings' && <SettingsTab />}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 md:px-10 pb-8 [-webkit-overflow-scrolling:touch]">
+          {activeTab === 'dashboard' && <DashboardTab onNavigate={setActiveTab} />}
+          {activeTab === 'inventory' && <InventoryTab />}
+          {activeTab === 'sales' && <SalesTab />}
+          {activeTab === 'customers' && <CustomersTab />}
+          {activeTab === 'settings' && <SettingsTab />}
+        </div>
       </main>
     </div>
   );

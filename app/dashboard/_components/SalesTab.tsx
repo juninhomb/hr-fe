@@ -170,7 +170,7 @@ function StripeCheckoutLinkModal({
 
         <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 space-y-3">
           <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 text-xs text-amber-950 leading-snug">
-            O pedido fica pendente até o cliente concluir o pagamento neste link.
+            O pedido fica pendente até o cliente concluir o pagamento neste link Stripe.
             Pode enviar o URL por WhatsApp ou email ou usar «Abrir no separador» abaixo.
           </div>
 
@@ -1262,7 +1262,7 @@ function PDVPanel({
             </button>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-6 max-h-[600px] overflow-y-auto">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-6">
             {variants.map(v => {
               const stock = Number(v.stock);
               const out = stock <= 0;
@@ -1302,238 +1302,268 @@ function PDVPanel({
           </div>
         </div>
 
-        {/* Carrinho */}
-        <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm flex flex-col max-h-[700px]">
-          <div className="p-6 border-b border-gray-50 flex items-center gap-2">
-            <ShoppingCart size={18} />
+        {/* Carrinho sem scroll interno: um único scroll da área principal do dashboard. */}
+        <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm">
+          <div className="p-5 border-b border-gray-50 flex items-center gap-2 bg-white">
+            <ShoppingCart size={18} aria-hidden />
             <h3 className="font-bold text-lg">Carrinho</h3>
-            <span className="ml-auto text-xs text-zinc-400 font-bold">{cart.length} itens</span>
+            <span className="ml-auto text-xs text-zinc-400 font-bold tabular-nums">{cart.length} itens</span>
           </div>
 
-          <div className="p-6 border-b border-gray-50 space-y-2">
-            <label className="text-[10px] uppercase font-bold text-zinc-400">
-              Cliente <span className="text-red-500">*</span>
-            </label>
-            <CustomerCombobox
-              customers={customers}
-              query={customerQuery}
-              setQuery={setCustomerQuery}
-              selected={selectedCustomer}
-              onSelect={(c) => { setSelectedCustomer(c); setCustomerQuery(''); }}
-              onClear={() => setSelectedCustomer(null)}
-            />
-            {!selectedCustomer && (
-              <p className="text-[11px] text-red-500 font-bold flex items-center gap-1">
-                <AlertCircle size={11} /> Cliente obrigatório para registar venda.
-              </p>
-            )}
-          </div>
+          <div className="p-5 border-b border-gray-50 space-y-2">
+              <label className="text-[10px] uppercase font-bold text-zinc-400">
+                Cliente <span className="text-red-500">*</span>
+              </label>
+              <CustomerCombobox
+                customers={customers}
+                query={customerQuery}
+                setQuery={setCustomerQuery}
+                selected={selectedCustomer}
+                onSelect={(c) => { setSelectedCustomer(c); setCustomerQuery(''); }}
+                onClear={() => setSelectedCustomer(null)}
+              />
+              {!selectedCustomer && (
+                <p className="text-[11px] text-red-500 font-bold flex items-center gap-1">
+                  <AlertCircle size={11} aria-hidden /> Cliente obrigatório para registar venda.
+                </p>
+              )}
+            </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-2">
-            {cart.length === 0 && (
-              <p className="text-center text-zinc-400 text-sm py-12">Carrinho vazio. Clica num produto.</p>
-            )}
-            {cart.map(line => (
-              <div key={line.sku} className="bg-zinc-50 rounded-2xl p-3">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold truncate">{line.name}</p>
-                    <p className="text-[10px] text-zinc-400 uppercase">{line.color} | {line.size}</p>
-                    <code className="text-[10px] text-zinc-500">{line.sku}</code>
+            <div className="p-4 space-y-2 min-h-[8rem]">
+              {cart.length === 0 && (
+                <p className="text-center text-zinc-400 text-sm py-8">Carrinho vazio. Clica num produto.</p>
+              )}
+              {cart.map(line => {
+                const label = line.name?.trim() || 'Produto';
+                const variantBits = [line.color, line.size].filter(
+                  x => x && String(x).trim() !== '' && String(x).trim() !== '—',
+                );
+                return (
+                  <div key={line.sku} className="bg-zinc-50 rounded-2xl p-3.5 ring-1 ring-zinc-100/80">
+                    <div className="flex gap-2 items-start">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[15px] font-bold text-zinc-900 leading-snug break-words">
+                          {label}
+                        </p>
+                        {variantBits.length > 0 && (
+                          <p className="text-[11px] text-zinc-500 mt-1 break-words">
+                            {variantBits.join(' · ')}
+                          </p>
+                        )}
+                        <p
+                          className="text-[10px] text-zinc-400 font-mono mt-1.5 truncate"
+                          title={line.sku}
+                        >
+                          SKU {line.sku}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeLine(line.sku)}
+                        className="text-zinc-400 hover:text-red-500 shrink-0 p-1"
+                        aria-label={`Remover ${label}`}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between mt-3 gap-3">
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => updateQty(line.sku, -1)}
+                          className="p-1.5 rounded-lg bg-white border border-gray-200 hover:border-black"
+                        >
+                          <Minus size={14} aria-hidden />
+                        </button>
+                        <span className="text-sm font-black w-7 text-center tabular-nums">{line.quantity}</span>
+                        <button
+                          type="button"
+                          onClick={() => updateQty(line.sku, +1)}
+                          disabled={line.quantity >= line.max_stock}
+                          className="p-1.5 rounded-lg bg-white border border-gray-200 hover:border-black disabled:opacity-30"
+                        >
+                          <Plus size={14} aria-hidden />
+                        </button>
+                      </div>
+                      <span className="text-sm font-mono font-black tabular-nums shrink-0">
+                        € {(line.unit_price * line.quantity).toFixed(2)}
+                      </span>
+                    </div>
                   </div>
-                  <button onClick={() => removeLine(line.sku)} className="text-zinc-400 hover:text-red-500">
-                    <Trash2 size={14} />
+                );
+              })}
+            </div>
+
+            <div className="p-4 border-t border-gray-50 space-y-2 bg-white">
+              <label className="text-[10px] uppercase font-bold text-zinc-400 flex items-center gap-1">
+                <Tag size={12} aria-hidden /> Cupão
+              </label>
+              <p className="text-[10px] text-zinc-400">Se alterares quantidades ou artigos, volta a aplicar o cupão.</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={couponInput}
+                  onChange={e => { setCouponInput(e.target.value); setCouponError(null); }}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); applyPdvCoupon(); } }}
+                  disabled={cart.length === 0}
+                  placeholder="Código…"
+                  className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-black disabled:opacity-40"
+                />
+                <button
+                  type="button"
+                  onClick={applyPdvCoupon}
+                  disabled={couponBusy || cart.length === 0}
+                  className="px-4 py-2 rounded-xl bg-zinc-100 border border-gray-200 text-xs font-bold hover:bg-zinc-200 disabled:opacity-40"
+                >
+                  {couponBusy ? '…' : 'Aplicar'}
+                </button>
+              </div>
+              {couponError && (
+                <p className="text-[11px] text-red-500 font-bold flex items-center gap-1">
+                  <AlertCircle size={11} aria-hidden /> {couponError}
+                </p>
+              )}
+              {couponApplied && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-xs">
+                  <span className="font-black text-emerald-800">{couponApplied.code}</span>
+                  <span className="text-emerald-700 font-mono font-bold tabular-nums">
+                    − € {couponApplied.discount.toFixed(2)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setCouponApplied(null); setCouponInput(''); setCouponError(null); }}
+                    className="ml-auto p-1 rounded-lg text-emerald-700 hover:bg-emerald-100"
+                    aria-label="Remover cupão"
+                  >
+                    <X size={14} />
                   </button>
                 </div>
-                <div className="flex items-center justify-between mt-2">
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => updateQty(line.sku, -1)} className="p-1 rounded-lg bg-white border border-gray-200 hover:border-black">
-                      <Minus size={12} />
-                    </button>
-                    <span className="text-sm font-black w-6 text-center">{line.quantity}</span>
-                    <button
-                      onClick={() => updateQty(line.sku, +1)}
-                      disabled={line.quantity >= line.max_stock}
-                      className="p-1 rounded-lg bg-white border border-gray-200 hover:border-black disabled:opacity-30"
-                    >
-                      <Plus size={12} />
-                    </button>
-                  </div>
-                  <span className="text-sm font-mono font-black">€ {(line.unit_price * line.quantity).toFixed(2)}</span>
+              )}
+            </div>
+
+            <div className="p-5 pb-6 border-t border-gray-50 space-y-3 bg-white">
+              <div className="grid grid-cols-2 gap-2">
+                {(['dinheiro', 'mbway', 'cartao', 'stripe'] as const).map(m => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setPaymentMethod(m)}
+                    className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase flex items-center justify-center gap-1.5 ${
+                      paymentMethod === m ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-500'
+                    }`}
+                  >
+                    {m === 'stripe' ? (
+                      <><CreditCard size={14} className="shrink-0" aria-hidden /> Stripe</>
+                    ) : (
+                      m
+                    )}
+                  </button>
+                ))}
+              </div>
+              {paymentMethod === 'stripe' && (
+                <p className="text-[10px] text-zinc-500 leading-snug rounded-xl bg-zinc-50 px-3 py-2 border border-zinc-100">
+                  O pedido fica <strong>pendente</strong> até ao pagamento online. No ecrã seguinte podes{' '}
+                  <strong>copiar</strong> o link Stripe ou abri-lo ao cliente — ao pagar, o estado passa a{' '}
+                  <strong>pago</strong>.
+                </p>
+              )}
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-sm text-zinc-500 font-bold">Total</span>
+                <div className="text-right space-y-0.5 min-w-0">
+                  {(couponDiscount >= 0.005 || markAsDelivery) && (
+                    <p className="text-[11px] text-zinc-400 font-medium ml-auto leading-relaxed">
+                      {`Subtotal € ${itemsSubtotal.toFixed(2)}`}
+                      {couponDiscount >= 0.005 ? ` · Cupão −€ ${couponDiscount.toFixed(2)}` : ''}
+                      {markAsDelivery ? ` · Entrega +€ ${shippingFeeValue.toFixed(2)}` : ''}
+                    </p>
+                  )}
+                  <span className="text-2xl font-black font-mono tabular-nums block">€ {grandTotal.toFixed(2)}</span>
                 </div>
               </div>
-            ))}
-          </div>
 
-          <div className="p-4 border-t border-gray-50 space-y-2">
-            <label className="text-[10px] uppercase font-bold text-zinc-400 flex items-center gap-1">
-              <Tag size={12} /> Cupão
-            </label>
-            <p className="text-[10px] text-zinc-400">Se alterares quantidades ou artigos, volta a aplicar o cupão.</p>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={couponInput}
-                onChange={e => { setCouponInput(e.target.value); setCouponError(null); }}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); applyPdvCoupon(); } }}
-                disabled={cart.length === 0}
-                placeholder="Código…"
-                className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-black disabled:opacity-40"
-              />
+              <label className={`flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer border transition ${
+                markAsDelivery ? 'bg-emerald-50 border-emerald-300' : 'bg-zinc-50 border-transparent hover:border-zinc-200'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={markAsDelivery}
+                  onChange={e => setMarkAsDelivery(e.target.checked)}
+                  className="w-4 h-4 accent-emerald-500 shrink-0"
+                />
+                <span className="text-xs font-bold text-zinc-700">
+                  Marcar como <span className="text-emerald-600">entrega</span>
+                </span>
+                {markAsDelivery && (
+                  <span className="ml-auto text-[10px] text-emerald-600 font-bold tabular-nums">+ € {shippingFeeValue.toFixed(2)}</span>
+                )}
+              </label>
+
+              {markAsDelivery && (
+                <div className="px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-xl">
+                  <label className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-zinc-700">Valor do frete (€)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={shippingFeeValue}
+                      onChange={e => {
+                        const raw = String(e.target.value).replace(',', '.');
+                        const parsed = Number(raw);
+                        setShippingFeeValue(Math.max(0, Number.isFinite(parsed) ? parsed : 0));
+                      }}
+                      className="ml-auto w-20 px-2 py-1 rounded-lg border border-emerald-300 text-xs font-bold text-right focus:outline-none focus:ring-2 focus:ring-emerald-500 tabular-nums"
+                    />
+                  </label>
+                </div>
+              )}
+
+              <label className={`flex items-start gap-2 px-3 py-2 rounded-xl border transition ${
+                paymentMethod === 'stripe'
+                  ? 'opacity-50 cursor-not-allowed bg-zinc-50 border-zinc-100'
+                  : markAsUnpaid
+                    ? 'bg-amber-50 border-amber-300 cursor-pointer'
+                    : 'bg-zinc-50 border-transparent hover:border-zinc-200 cursor-pointer'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={markAsUnpaid}
+                  disabled={paymentMethod === 'stripe'}
+                  onChange={e => setMarkAsUnpaid(e.target.checked)}
+                  className="w-4 h-4 accent-amber-500 shrink-0 mt-0.5"
+                />
+                <span className="text-xs font-bold text-zinc-700 min-w-0 flex-1">
+                  Marcar como <span className="text-amber-600">não paga</span>
+                  {paymentMethod === 'stripe' && (
+                    <span className="text-zinc-400 font-normal normal-case"> (Stripe gere o pagamento)</span>
+                  )}
+                </span>
+                <span className="text-[10px] text-zinc-500 shrink-0 whitespace-nowrap">stock reservado</span>
+              </label>
+
               <button
                 type="button"
-                onClick={applyPdvCoupon}
-                disabled={couponBusy || cart.length === 0}
-                className="px-4 py-2 rounded-xl bg-zinc-100 border border-gray-200 text-xs font-bold hover:bg-zinc-200 disabled:opacity-40"
+                onClick={finalize}
+                disabled={submitting || cart.length === 0 || !selectedCustomer}
+                className={`w-full py-3.5 rounded-xl font-bold text-sm transition disabled:opacity-40 disabled:cursor-not-allowed ${
+                  paymentMethod === 'stripe'
+                    ? 'bg-violet-600 text-white hover:bg-violet-700'
+                    : markAsUnpaid
+                      ? 'bg-amber-500 text-white hover:bg-amber-600'
+                      : 'bg-black text-white hover:bg-zinc-800'
+                }`}
               >
-                {couponBusy ? '…' : 'Aplicar'}
+                {submitting
+                  ? 'A registar...'
+                  : !selectedCustomer
+                    ? 'Selecione um cliente'
+                    : paymentMethod === 'stripe'
+                      ? 'Criar pedido Stripe'
+                      : markAsUnpaid
+                        ? 'Criar Pedido Pendente'
+                        : 'Finalizar Venda'}
               </button>
             </div>
-            {couponError && (
-              <p className="text-[11px] text-red-500 font-bold flex items-center gap-1">
-                <AlertCircle size={11} /> {couponError}
-              </p>
-            )}
-            {couponApplied && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-xs">
-                <span className="font-black text-emerald-800">{couponApplied.code}</span>
-                <span className="text-emerald-700 font-mono font-bold">
-                  − € {couponApplied.discount.toFixed(2)}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => { setCouponApplied(null); setCouponInput(''); setCouponError(null); }}
-                  className="ml-auto p-1 rounded-lg text-emerald-700 hover:bg-emerald-100"
-                  aria-label="Remover cupão"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="p-6 border-t border-gray-50 space-y-3">
-            <div className="grid grid-cols-2 gap-2">
-              {(['dinheiro', 'mbway', 'cartao', 'stripe'] as const).map(m => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setPaymentMethod(m)}
-                  className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase flex items-center justify-center gap-1.5 ${
-                    paymentMethod === m ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-500'
-                  }`}
-                >
-                  {m === 'stripe' ? (
-                    <><CreditCard size={14} className="shrink-0" /> Stripe</>
-                  ) : (
-                    m
-                  )}
-                </button>
-              ))}
-            </div>
-            {paymentMethod === 'stripe' && (
-              <p className="text-[10px] text-zinc-500 leading-relaxed">
-                O pedido fica <strong>pendente</strong> até o pagamento online. Gera-se o link Stripe com o valor exacto
-                (artigos, cupão e portes): no ecrã seguinte podes <strong>copiar</strong> o URL ou abri-lo no separador.
-                Quando o cliente paga, o estado passa a <strong>pago</strong> automaticamente.
-              </p>
-            )}
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-zinc-500 font-bold">Total</span>
-              <div className="text-right space-y-0.5">
-                {(couponDiscount >= 0.005 || markAsDelivery) && (
-                  <p className="text-[11px] text-zinc-400 font-medium max-w-[220px] ml-auto leading-relaxed">
-                    {`Subtotal € ${itemsSubtotal.toFixed(2)}`}
-                    {couponDiscount >= 0.005 ? ` · Cupão −€ ${couponDiscount.toFixed(2)}` : ''}
-                    {markAsDelivery ? ` · Entrega +€ ${shippingFeeValue.toFixed(2)}` : ''}
-                  </p>
-                )}
-                <span className="text-2xl font-black font-mono">€ {grandTotal.toFixed(2)}</span>
-              </div>
-            </div>
-
-            <label className={`flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer border transition ${
-              markAsDelivery ? 'bg-emerald-50 border-emerald-300' : 'bg-zinc-50 border-transparent hover:border-zinc-200'
-            }`}>
-              <input
-                type="checkbox"
-                checked={markAsDelivery}
-                onChange={e => setMarkAsDelivery(e.target.checked)}
-                className="w-4 h-4 accent-emerald-500"
-              />
-              <span className="text-xs font-bold text-zinc-700">
-                Marcar como <span className="text-emerald-600">entrega</span>
-              </span>
-              {markAsDelivery && (
-                <span className="ml-auto text-[10px] text-emerald-600 font-bold">+ € {shippingFeeValue.toFixed(2)}</span>
-              )}
-            </label>
-
-            {markAsDelivery && (
-              <div className="px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-xl">
-                <label className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-zinc-700">Valor do frete (€)</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={shippingFeeValue}
-                    onChange={e => {
-                      const raw = String(e.target.value).replace(',', '.');
-                      const parsed = Number(raw);
-                      setShippingFeeValue(Math.max(0, Number.isFinite(parsed) ? parsed : 0));
-                    }}
-                    className="ml-auto w-20 px-2 py-1 rounded-lg border border-emerald-300 text-xs font-bold text-right focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </label>
-              </div>
-            )}
-
-            <label className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition ${
-              paymentMethod === 'stripe'
-                ? 'opacity-50 cursor-not-allowed bg-zinc-50 border-zinc-100'
-                : markAsUnpaid
-                  ? 'bg-amber-50 border-amber-300 cursor-pointer'
-                  : 'bg-zinc-50 border-transparent hover:border-zinc-200 cursor-pointer'
-            }`}>
-              <input
-                type="checkbox"
-                checked={markAsUnpaid}
-                disabled={paymentMethod === 'stripe'}
-                onChange={e => setMarkAsUnpaid(e.target.checked)}
-                className="w-4 h-4 accent-amber-500"
-              />
-              <span className="text-xs font-bold text-zinc-700">
-                Marcar como <span className="text-amber-600">não paga</span>
-                {paymentMethod === 'stripe' && (
-                  <span className="text-zinc-400 font-normal normal-case"> (Stripe gere o pagamento)</span>
-                )}
-              </span>
-              <span className="ml-auto text-[10px] text-zinc-500">stock reservado</span>
-            </label>
-
-            <button
-              onClick={finalize}
-              disabled={submitting || cart.length === 0 || !selectedCustomer}
-              className={`w-full py-3 rounded-xl font-bold text-sm transition disabled:opacity-40 disabled:cursor-not-allowed ${
-                paymentMethod === 'stripe'
-                  ? 'bg-violet-600 text-white hover:bg-violet-700'
-                  : markAsUnpaid
-                    ? 'bg-amber-500 text-white hover:bg-amber-600'
-                    : 'bg-black text-white hover:bg-zinc-800'
-              }`}
-            >
-              {submitting
-                ? 'A registar...'
-                : !selectedCustomer
-                  ? 'Selecione um cliente'
-                  : paymentMethod === 'stripe'
-                    ? 'Criar pedido Stripe'
-                    : markAsUnpaid
-                      ? 'Criar Pedido Pendente'
-                      : 'Finalizar Venda'}
-            </button>
-          </div>
         </div>
       </div>
 
@@ -2550,7 +2580,10 @@ function OrderDetailsModal({
                   const url = String(stripeRes.data.checkout_url || '').trim();
                   if (url && /^https:\/\//i.test(url)) {
                     setStripeLinkUrl(url);
-                    toast('success', `Link gerado — pedido #${order.id} aguarda pagamento Stripe. Copia o URL no ecrã.`);
+                    toast(
+                      'success',
+                      `Link gerado — pedido #${order.id} aguarda pagamento Stripe. Copia o URL no ecrã.`,
+                    );
                   } else {
                     toast('error', 'O Stripe devolveu um link inválido. Tenta novamente.');
                   }

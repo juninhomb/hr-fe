@@ -17,7 +17,10 @@ type DashboardStats = {
   orders_placed_today: number;
   revenue_today: number;
   revenue_7d: number;
-  revenue_30d: number;
+  revenue_current_month: number;
+  /** Resposta legacy se o servidor ainda expuser só esta chave */
+  revenue_30d?: number;
+  stats_month_anchor?: string;
   low_stock_count: number;
   out_of_stock_count: number;
   total_customers: number;
@@ -46,6 +49,38 @@ type DashboardStats = {
   }[];
 };
 
+/** Extrai `YYYY-MM-DD` de strings tipo `2026-05-01` ou `2026-05-01T00:00:00.000Z` (Postgres/driver). */
+function normalizeMonthAnchor(raw: unknown): string | undefined {
+  if (raw == null || raw === '') return undefined;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(raw).trim());
+  return m ? m[1] : undefined;
+}
+
+/** Primeiro dia do mês das stats (`YYYY-MM-DD`, servidor) → subtítulo humano em PT */
+function formatStatsMonthSubtitle(anchorUnknown: unknown): string {
+  const anchor = normalizeMonthAnchor(anchorUnknown);
+  if (!anchor) return 'Mês civil corrente';
+  const [y, m, d] = anchor.split('-').map(Number);
+  const formatted = new Intl.DateTimeFormat('pt-PT', {
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(y, m - 1, d));
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+}
+
+function coerceAmount(raw: unknown): number {
+  if (raw == null) return 0;
+  const n = typeof raw === 'number' ? raw : Number(String(raw));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function revenueMonthlyFromStats(stats: DashboardStats | null): number {
+  if (!stats) return 0;
+  if ('revenue_current_month' in stats && stats.revenue_current_month != null) {
+    return coerceAmount(stats.revenue_current_month);
+  }
+  return coerceAmount(stats.revenue_30d);
+}
 // =============================================================
 // Componente principal
 // =============================================================
@@ -190,9 +225,9 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
           />
           <QuickStat
             icon={Euro}
-            label="Receita 30d"
-            value={`€ ${Number(stats?.revenue_30d || 0).toFixed(2)}`}
-            extra="Últimos 30 dias"
+            label="Receita mensal"
+            value={`€ ${revenueMonthlyFromStats(stats).toFixed(2)}`}
+            extra={formatStatsMonthSubtitle(stats?.stats_month_anchor)}
             tone="emerald"
             onClick={() => go('sales')}
           />

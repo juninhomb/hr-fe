@@ -3,15 +3,29 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertCircle, Check, CreditCard, Loader2 } from 'lucide-react';
-import { API_BASE } from '../../../lib/api';
+import publicApi from '../../../lib/publicApi';
 
 const SESSION_RE = /^cs_[A-Za-z0-9_]+$/;
+
+function hasStaffToken(): boolean {
+  try {
+    return Boolean(typeof window !== 'undefined' && window.localStorage.getItem('hrstore-token'));
+  } catch {
+    return false;
+  }
+}
+
+function redirectAfterStripeOutcome(kind: 'paid' | 'canceled') {
+  window.location.replace(kind === 'canceled' ? '/pagamento-cancelado' : '/pagamento-obrigado');
+}
 
 type Phase = 'idle' | 'working' | 'error';
 
 /**
- * Após pagamento Stripe iniciado no PDV: verifica a sessão (como o site)
- * e envia o staff de volta ao separador Vendas com toast adequado.
+ * Retorno Stripe após Checkout do PDV (`STRIPE_ADMIN_PUBLIC_ORIGIN`).
+ *
+ * Confirma a sessão em `/api/public/orders/stripe-session-verify` (com `NEXT_PUBLIC_PUBLIC_API_TOKEN`).
+ * Após pagamento: **sempre** `/pagamento-obrigado` ou `/pagamento-cancelado` (cliente não vê vendas admin).
  */
 export default function PdvStripeReturnPage() {
   const [phase, setPhase] = useState<Phase>('idle');
@@ -24,14 +38,16 @@ export default function PdvStripeReturnPage() {
 
     if (canceled) {
       try {
-        sessionStorage.setItem(
-          'hrstore-pdv-stripe-toast',
-          JSON.stringify({ kind: 'canceled' }),
-        );
+        if (hasStaffToken()) {
+          sessionStorage.setItem(
+            'hrstore-pdv-stripe-toast',
+            JSON.stringify({ kind: 'canceled' }),
+          );
+        }
       } catch {
         /* noop */
       }
-      window.location.replace('/dashboard?tab=sales');
+      redirectAfterStripeOutcome('canceled');
       return;
     }
 
@@ -42,21 +58,13 @@ export default function PdvStripeReturnPage() {
     }
 
     setPhase('working');
-    void fetch(`${API_BASE}/api/public/orders/stripe-session-verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId }),
-    })
-      .then(async (res) => {
-        const data = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          updated?: boolean;
-          order_id?: number | null;
-          reason?: string;
-        };
-        if (!res.ok) {
-          throw new Error(data.error || 'Não foi possível confirmar o pagamento.');
-        }
+    void publicApi
+      .post<{ error?: string; updated?: boolean; order_id?: number | null; reason?: string }>(
+        '/orders/stripe-session-verify',
+        { session_id: sessionId },
+      )
+      .then((response) => {
+        const data = response.data ?? {};
         if (data.updated === false && data.reason === 'not_paid') {
           setPhase('error');
           setError(
@@ -72,23 +80,40 @@ export default function PdvStripeReturnPage() {
           return;
         }
         try {
-          sessionStorage.setItem(
-            'hrstore-pdv-stripe-toast',
-            JSON.stringify({
-              kind: 'paid',
-              orderId: data.order_id ?? null,
-              updated: data.updated !== false,
-              reason: data.reason ?? null,
-            }),
-          );
+          if (hasStaffToken()) {
+            sessionStorage.setItem(
+              'hrstore-pdv-stripe-toast',
+              JSON.stringify({
+                kind: 'paid',
+                orderId: data.order_id ?? null,
+                updated: data.updated !== false,
+                reason: data.reason ?? null,
+              }),
+            );
+          }
         } catch {
           /* noop */
         }
-        window.location.replace('/dashboard?tab=sales');
+        redirectAfterStripeOutcome('paid');
       })
       .catch((e: unknown) => {
         setPhase('error');
-        setError(e instanceof Error ? e.message : 'Erro ao confirmar o pagamento.');
+        let msg =
+          e && typeof e === 'object' && 'message' in e && typeof e.message === 'string'
+            ? e.message
+            : 'Erro ao confirmar o pagamento.';
+        const ax = e as {
+          response?: { status?: number; data?: { error?: string } };
+          message?: string;
+        };
+        const status = ax.response?.status;
+        const backendErr = ax.response?.data?.error?.trim();
+        if (backendErr) msg = backendErr;
+        if (status === 403 && backendErr?.includes('API pública')) {
+          msg +=
+            ' Na build do dashboard, define NEXT_PUBLIC_PUBLIC_API_TOKEN com o mesmo valor que PUBLIC_API_TOKEN no servidor (como no site público).';
+        }
+        setError(msg);
       });
   }, []);
 
@@ -102,14 +127,23 @@ export default function PdvStripeReturnPage() {
           <h1 className="text-xl font-black">Não foi possível confirmar</h1>
           <p className="text-sm text-zinc-600">{error}</p>
           <p className="text-xs text-zinc-400">
-            O pedido pode continuar pendente. Verifica em <strong>Vendas &amp; PDV</strong> ou espera pelo webhook Stripe.
+            O pagamento pode ter sido registado mesmo assim (webhook). Se és cliente e precisares de ajuda,
+            usa o WhatsApp habitual da HR Store.
           </p>
-          <Link
-            href="/dashboard?tab=sales"
-            className="inline-flex items-center justify-center w-full py-3 rounded-xl bg-black text-white font-bold text-sm"
-          >
-            Voltar às vendas
-          </Link>
+          <div className="flex flex-col gap-2 w-full">
+            <a
+              href="https://hrstorept.com"
+              className="inline-flex items-center justify-center w-full py-3 rounded-xl border border-gray-200 text-zinc-800 font-bold text-sm hover:bg-zinc-50 transition"
+            >
+              Ir para hrstorept.com
+            </a>
+            <Link
+              href="/dashboard?tab=sales"
+              className="inline-flex items-center justify-center w-full py-3 rounded-xl bg-black text-white font-bold text-sm"
+            >
+              Sou da equipa — Vendas &amp; PDV
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -130,7 +164,7 @@ export default function PdvStripeReturnPage() {
           A confirmar pagamento…
         </h1>
         <p className="text-sm text-zinc-500">
-          Aguarda um momento. Vais ser redireccionado para <strong>Vendas &amp; PDV</strong>.
+          Aguarda um momento. Vais ver a página de confirmação do pagamento.
         </p>
       </div>
     </div>

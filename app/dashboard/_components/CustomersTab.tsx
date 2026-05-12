@@ -486,16 +486,16 @@ export default function CustomersTab() {
                       value={form.postal_code}
                       onChange={(e) => setForm((f) => ({ ...f, postal_code: e.target.value }))}
                       className={inputCls}
-                      placeholder="2700-001"
+                      placeholder={form.country === 'ES' || form.country === 'MC' ? 'Ex.: 28050' : '2700-001'}
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-semibold text-zinc-400 mb-1">País</label>
+                    <label className="block text-[10px] font-semibold text-zinc-400 mb-1">País (ISO)</label>
                     <input
                       value={form.country}
                       onChange={(e) => setForm((f) => ({ ...f, country: e.target.value.toUpperCase().slice(0, 2) }))}
                       className={inputCls}
-                      placeholder="PT"
+                      placeholder="PT, ES, MC, EU…"
                       maxLength={2}
                     />
                   </div>
@@ -508,7 +508,9 @@ export default function CustomersTab() {
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-semibold text-zinc-400 mb-1">Distrito</label>
+                    <label className="block text-[10px] font-semibold text-zinc-400 mb-1">
+                      Distrito (PT) / província (ES, opcional)
+                    </label>
                     <input
                       value={form.district}
                       onChange={(e) => setForm((f) => ({ ...f, district: e.target.value }))}
@@ -594,7 +596,7 @@ export default function CustomersTab() {
                         value={newAddr.country}
                         onChange={(e) => setNewAddr((a) => ({ ...a, country: e.target.value.toUpperCase().slice(0, 2) }))}
                         className={inputCls}
-                        placeholder="PT"
+                        placeholder="ISO: PT, ES, MC…"
                         maxLength={2}
                       />
                       <input
