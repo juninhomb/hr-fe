@@ -1992,7 +1992,9 @@ function PendingOrdersPanel({
                   <p className="mt-2 text-[11px] text-zinc-500">
                     Frete: € {Number(o.shipping_fee || 0).toFixed(2)}
                     {Number(o.shipping_fee || 0) === 0 && (
-                      <span className="text-amber-600 font-bold ml-1">— use Inserir frete</span>
+                      <span className="text-amber-600 font-bold ml-1">
+                        — após WhatsApp, usa «Inserir frete» antes de confirmar
+                      </span>
                     )}
                   </p>
                 )}
@@ -2075,6 +2077,10 @@ function PendingOrdersPanel({
                   />
                 </div>
                 <div className="text-xs text-zinc-600 pb-1 sm:flex-1">
+                  <p className="mb-1 text-[11px] text-emerald-900/90 leading-snug">
+                    Pedidos <strong>pendentes</strong> com entrega: combina portes no WhatsApp se for o caso,
+                    depois grava o valor aqui — o total do pedido actualiza e podes confirmar o pagamento.
+                  </p>
                   <span className="font-mono">
                     Itens: €{' '}
                     {(o.items || []).reduce(
