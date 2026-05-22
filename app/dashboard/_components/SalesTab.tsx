@@ -335,6 +335,31 @@ export default function SalesTab() {
 // =============================================================
 // OVERVIEW — Resumo de vendas (vista default)
 // =============================================================
+function currentYearMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function monthLabel(ym: string): string {
+  const [year, month] = ym.split('-');
+  const date = new Date(Number(year), Number(month) - 1, 1);
+  return date.toLocaleDateString('pt-PT', { month: 'long', year: 'numeric' });
+}
+
+const LAUNCH_MONTH = '2026-05';
+
+function last12Months(): string[] {
+  const months: string[] = [];
+  const now = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (ym < LAUNCH_MONTH) break;
+    months.push(ym);
+  }
+  return months;
+}
+
 function OverviewPanel({
   onChangeView, toast,
 }: { onChangeView: (v: View) => void; toast: (t: 'success' | 'error', m: string) => void }) {
@@ -342,6 +367,7 @@ function OverviewPanel({
   const [pending, setPending] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState<number | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<string>(currentYearMonth());
   /** Durante o POST Ship2U (espera pelo Cypress no servidor). */
   const [ship2uBusyOrderId, setShip2uBusyOrderId] = useState<number | null>(null);
   const [detailsId, setDetailsId] = useState<number | null>(null);
@@ -543,6 +569,15 @@ function OverviewPanel({
     }
   };
 
+  const filteredHistory = useMemo(() => {
+    if (!selectedMonth) return history;
+    const [year, month] = selectedMonth.split('-').map(Number);
+    return history.filter(o => {
+      const d = new Date(o.created_at);
+      return d.getFullYear() === year && d.getMonth() + 1 === month;
+    });
+  }, [history, selectedMonth]);
+
   const stats = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const todayOrders = history.filter(o => new Date(o.created_at) >= today);
@@ -550,7 +585,7 @@ function OverviewPanel({
       o.status === 'pago' || o.status === 'expedido' || o.status === 'enviado' || o.status === 'entregue',
     );
     const revenueToday = paidToday.reduce((a, o) => a + Number(o.total_amount || 0), 0);
-    const totalRevenue = history
+    const totalRevenue = filteredHistory
       .filter(o => o.status !== 'cancelado' && o.status !== 'aguardando_pagamento')
       .reduce((a, o) => a + Number(o.total_amount || 0), 0);
     const toShip = history.filter(
@@ -566,7 +601,7 @@ function OverviewPanel({
       toShipCount: toShip.length,
       toShipValue: toShip.reduce((a, o) => a + Number(o.total_amount || 0), 0),
     };
-  }, [history, pending]);
+  }, [history, filteredHistory, pending]);
 
   return (
     <div className="space-y-6">
@@ -612,10 +647,28 @@ function OverviewPanel({
         />
         <KpiCard
           icon={<Euro size={18} />}
-          label="Receita total"
+          label={`Receita — ${monthLabel(selectedMonth)}`}
           value={`€ ${stats.totalRevenue.toFixed(2)}`}
           tone="zinc"
         />
+      </div>
+
+      {/* Filtro por mês */}
+      <div className="flex items-center gap-2">
+        <Calendar size={15} className="text-zinc-400 shrink-0" aria-hidden />
+        <span className="text-xs font-semibold text-zinc-500 shrink-0">Filtrar por mês:</span>
+        <select
+          value={selectedMonth}
+          onChange={e => setSelectedMonth(e.target.value)}
+          className="text-sm font-semibold bg-white border border-gray-200 rounded-xl px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-black/10 cursor-pointer"
+        >
+          {last12Months().map(ym => (
+            <option key={ym} value={ym}>
+              {monthLabel(ym)}{ym === currentYearMonth() ? ' (atual)' : ''}
+            </option>
+          ))}
+        </select>
+        <span className="text-xs text-zinc-400">{filteredHistory.length} pedido{filteredHistory.length !== 1 ? 's' : ''}</span>
       </div>
 
       {/* Action bar */}
@@ -650,11 +703,11 @@ function OverviewPanel({
       {/* Histórico recente */}
       <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-visible">
         <div className="p-6 border-b border-gray-50 flex items-center gap-2">
-          <h3 className="font-bold text-lg flex-1">Vendas recentes</h3>
-          <span className="text-xs text-zinc-400">{history.length} registos</span>
+          <h3 className="font-bold text-lg flex-1">Vendas — {monthLabel(selectedMonth)}</h3>
+          <span className="text-xs text-zinc-400">{filteredHistory.length} registos</span>
         </div>
         <OrdersTable
-          orders={history.slice(0, 80)}
+          orders={filteredHistory.slice(0, 80)}
           loading={loading}
           actionId={actionId}
           ship2uBusyOrderId={ship2uBusyOrderId}
