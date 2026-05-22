@@ -276,8 +276,8 @@ function ExpedicaoPrintInner() {
             </button>
           </div>
           <p className="text-xs text-zinc-600 leading-snug">
-            O pedido deve estar <strong>Expedido</strong> no sistema (botão «Expedir pedido» nas vendas).
-            Depois usa <strong>Enviar via CTT</strong> para marcar como enviado.
+            Disponível para qualquer pedido <strong>pago</strong> (entrega ou levantamento na loja), via «Expedir pedido» nas vendas.
+            Em pedidos com entrega, depois usa <strong>Enviar via CTT</strong> para marcar como enviado.
             A folha branca de baixo tem <strong>55&nbsp;mm</strong> de largura (como no PDF).
             No diálogo de impressão, se ainda vês A4, abre <strong>Mais definições</strong> e procura tamanho/escala compatível com a térmica ou imprime directamente na impressora 58&nbsp;mm.
           </p>

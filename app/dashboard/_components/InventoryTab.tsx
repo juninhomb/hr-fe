@@ -6,10 +6,14 @@ import {
   Star, Eye, EyeOff, Filter, FileSpreadsheet,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import api, { resolveImageUrl } from '../../../lib/api';
+import api from '../../../lib/api';
 import { parseInventoryImportWorkbook } from '../../../lib/inventoryExcel';
 import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
 import { suggestCategoryId } from '../../../lib/categorySuggester';
+import MultiImageGallery, {
+  type GalleryImage,
+  type PendingImage,
+} from './MultiImageGallery';
 
 type BaseProduct = {
   id: number;
@@ -45,18 +49,14 @@ export default function InventoryTab() {
   });
   const [categoryAuto, setCategoryAuto] = useState(true);  // sugestão automática ON por defeito
 
-  // Imagem do PRODUTO-base (fallback partilhado por todas as variantes)
-  const [productImageFile, setProductImageFile] = useState<File | null>(null);
-  const [productImagePreview, setProductImagePreview] = useState<string | null>(null);
-  const [productImageRemoved, setProductImageRemoved] = useState(false);
-  const productFileRef = useRef<HTMLInputElement | null>(null);
+  const [productImages, setProductImages] = useState<GalleryImage[]>([]);
+  const [productPending, setProductPending] = useState<PendingImage[]>([]);
+  const [productDeleteIds, setProductDeleteIds] = useState<number[]>([]);
 
-  // Imagem específica desta VARIANTE (override; agora também na criação)
-  const [variantImageFile, setVariantImageFile] = useState<File | null>(null);
-  const [variantImagePreview, setVariantImagePreview] = useState<string | null>(null);
-  const [variantImageRemoved, setVariantImageRemoved] = useState(false);
+  const [variantImages, setVariantImages] = useState<GalleryImage[]>([]);
+  const [variantPending, setVariantPending] = useState<PendingImage[]>([]);
+  const [variantDeleteIds, setVariantDeleteIds] = useState<number[]>([]);
   const [variantApplyToColor, setVariantApplyToColor] = useState(false);
-  const variantFileRef = useRef<HTMLInputElement | null>(null);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
   const [baseProducts, setBaseProducts] = useState<BaseProduct[]>([]);
@@ -115,18 +115,35 @@ export default function InventoryTab() {
   // Cleanup de blob URLs no unmount — evita leak quando o admin troca de
   // separador / faz logout / fecha browser com modal aberto.
   // Usamos refs para captar sempre o último valor sem retriggerar o effect.
-  const productPreviewRef = useRef<string | null>(null);
-  const variantPreviewRef = useRef<string | null>(null);
-  useEffect(() => { productPreviewRef.current = productImagePreview; }, [productImagePreview]);
-  useEffect(() => { variantPreviewRef.current = variantImagePreview; }, [variantImagePreview]);
+  const pendingPreviewsRef = useRef<PendingImage[]>([]);
+  useEffect(() => {
+    pendingPreviewsRef.current = [...productPending, ...variantPending];
+  }, [productPending, variantPending]);
   useEffect(() => {
     return () => {
-      const p = productPreviewRef.current;
-      const v = variantPreviewRef.current;
-      if (p && p.startsWith('blob:')) URL.revokeObjectURL(p);
-      if (v && v.startsWith('blob:')) URL.revokeObjectURL(v);
+      for (const p of pendingPreviewsRef.current) {
+        if (p.preview.startsWith('blob:')) URL.revokeObjectURL(p.preview);
+      }
     };
   }, []);
+
+  const revokePending = (list: PendingImage[]) => {
+    for (const p of list) {
+      if (p.preview.startsWith('blob:')) URL.revokeObjectURL(p.preview);
+    }
+  };
+
+  const clearGalleryState = () => {
+    revokePending(productPending);
+    revokePending(variantPending);
+    setProductImages([]);
+    setProductPending([]);
+    setProductDeleteIds([]);
+    setVariantImages([]);
+    setVariantPending([]);
+    setVariantDeleteIds([]);
+    setVariantApplyToColor(false);
+  };
 
   // Sugestão automática de categoria pelo prefixo do nome (só na criação
   // de novo produto e enquanto o admin não tenha tocado no select).
@@ -147,23 +164,8 @@ export default function InventoryTab() {
       characteristics: '',
     });
     setCategoryAuto(true);
-    // Limpa ambas as zonas de imagem (produto e variante)
-    if (productImagePreview && productImagePreview.startsWith('blob:')) {
-      URL.revokeObjectURL(productImagePreview);
-    }
-    if (variantImagePreview && variantImagePreview.startsWith('blob:')) {
-      URL.revokeObjectURL(variantImagePreview);
-    }
-    setProductImageFile(null);
-    setProductImagePreview(null);
-    setProductImageRemoved(false);
-    setVariantImageFile(null);
-    setVariantImagePreview(null);
-    setVariantImageRemoved(false);
-    setVariantApplyToColor(false);
+    clearGalleryState();
     setFormError('');
-    if (productFileRef.current) productFileRef.current.value = '';
-    if (variantFileRef.current) variantFileRef.current.value = '';
   };
 
   const openModal = () => {
@@ -201,18 +203,29 @@ export default function InventoryTab() {
       category_id: item.category_id != null ? String(item.category_id) : '',
       characteristics: item.product_characteristics ?? item.characteristics ?? '',
     });
-    setCategoryAuto(false);  // em edit não queremos sobrescrever a categoria já escolhida
-    // Pré-popular as 2 zonas de imagem com os valores actuais
-    setProductImageFile(null);
-    setProductImagePreview(resolveImageUrl(item.product_image));
-    setProductImageRemoved(false);
-    setVariantImageFile(null);
-    setVariantImagePreview(resolveImageUrl(item.variant_image));
-    setVariantImageRemoved(false);
-    setVariantApplyToColor(false);
+    setCategoryAuto(false);
+    clearGalleryState();
     setFormError('');
     setEditingProduct(item);
     setModalMode('edit');
+
+    const pid = item.product_id;
+    if (pid) {
+      try {
+        const pr = await api.get<GalleryImage[]>(`/products/${pid}/images`);
+        setProductImages(Array.isArray(pr.data) ? pr.data : []);
+      } catch {
+        setProductImages([]);
+      }
+    }
+    if (item.id) {
+      try {
+        const vr = await api.get<GalleryImage[]>(`/variants/${item.id}/images`);
+        setVariantImages(Array.isArray(vr.data) ? vr.data : []);
+      } catch {
+        setVariantImages([]);
+      }
+    }
   };
 
   // Detecta SKU duplicado em tempo real (avisa antes do submit)
@@ -362,65 +375,57 @@ export default function InventoryTab() {
     return suggestCategoryId(form.name, categories);
   }, [form.name, categories]);
 
-  // -------------------------------------------------------------
-  // Imagem — handlers genéricos (factory para produto vs variante)
-  // -------------------------------------------------------------
-  const makeImageHandlers = (
-    file: File | null,
-    setFile: (f: File | null) => void,
-    preview: string | null,
-    setPreview: (p: string | null) => void,
-    setRemoved: (b: boolean) => void,
-    inputRef: React.RefObject<HTMLInputElement | null>
-  ) => ({
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-      const f = e.target.files?.[0];
-      if (!f) return;
+  const addPendingFiles = (
+    files: File[],
+    setPending: React.Dispatch<React.SetStateAction<PendingImage[]>>,
+  ) => {
+    const valid: PendingImage[] = [];
+    for (const f of files) {
       if (f.size > 5 * 1024 * 1024) {
-        setFormError('Imagem demasiado grande (máx. 5 MB).');
-        e.target.value = '';
-        return;
+        setFormError('Cada imagem: máximo 5 MB.');
+        continue;
       }
-      setFile(f);
-      setRemoved(false);
-      if (preview && preview.startsWith('blob:')) URL.revokeObjectURL(preview);
-      setPreview(URL.createObjectURL(f));
-      setFormError('');
-    },
-    onRemove: () => {
-      if (preview && preview.startsWith('blob:')) URL.revokeObjectURL(preview);
-      setFile(null);
-      setPreview(null);
-      setRemoved(true);
-      if (inputRef.current) inputRef.current.value = '';
-    },
-  });
-
-  // Sincroniza imagem do PRODUTO-base.
-  const syncProductImage = async (productId: number) => {
-    if (productImageFile) {
-      const fd = new FormData();
-      fd.append('image', productImageFile);
-      await api.post(`/products/${productId}/image`, fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      valid.push({
+        key: `p-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        file: f,
+        preview: URL.createObjectURL(f),
       });
-    } else if (productImageRemoved) {
-      await api.delete(`/products/${productId}/image`);
+    }
+    if (valid.length) {
+      setPending((prev) => [...prev, ...valid]);
+      setFormError('');
     }
   };
 
-  // Sincroniza imagem da VARIANTE específica.
-  const syncVariantImage = async (variantId: number) => {
-    if (variantImageFile) {
-      const fd = new FormData();
-      fd.append('image', variantImageFile);
-      if (variantApplyToColor) fd.append('applyToColor', 'true');
-      await api.post(`/variants/${variantId}/image`, fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-    } else if (variantImageRemoved) {
-      await api.delete(`/variants/${variantId}/image`);
+  const uploadPendingGallery = async (
+    entity: 'products' | 'variants',
+    entityId: number,
+    pending: PendingImage[],
+    opts?: { applyToColor?: boolean },
+  ) => {
+    if (!pending.length) return;
+    const fd = new FormData();
+    for (const p of pending) fd.append('images', p.file);
+    if (opts?.applyToColor) fd.append('applyToColor', 'true');
+    await api.post(`/${entity}/${entityId}/images`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  };
+
+  const syncProductGallery = async (productId: number) => {
+    for (const imageId of productDeleteIds) {
+      await api.delete(`/products/${productId}/images/${imageId}`);
     }
+    await uploadPendingGallery('products', productId, productPending);
+  };
+
+  const syncVariantGallery = async (variantId: number) => {
+    for (const imageId of variantDeleteIds) {
+      await api.delete(`/variants/${variantId}/images/${imageId}`);
+    }
+    await uploadPendingGallery('variants', variantId, variantPending, {
+      applyToColor: variantApplyToColor,
+    });
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -476,18 +481,14 @@ export default function InventoryTab() {
             is_active: true,
           });
           newVariantId = res.data?.id ?? null;
-          // Se houver imagem, faz upload logo após criar
-          if (newVariantId && variantImageFile) {
-            const fd = new FormData();
-            fd.append('image', variantImageFile);
-            if (variantApplyToColor) fd.append('applyToColor', 'true');
+          if (newVariantId && variantPending.length) {
             try {
-              await api.post(`/variants/${newVariantId}/image`, fd, {
-                headers: { 'Content-Type': 'multipart/form-data' },
+              await uploadPendingGallery('variants', newVariantId, variantPending, {
+                applyToColor: variantApplyToColor,
               });
             } catch (imgErr: any) {
               setFormError(
-                imgErr?.response?.data?.error || 'Variante criada, mas falhou o upload da imagem.'
+                imgErr?.response?.data?.error || 'Variante criada, mas falhou o upload das imagens.'
               );
               setSaving(false);
               fetchProducts();
@@ -508,13 +509,12 @@ export default function InventoryTab() {
         productId = editingProduct.product_id ?? null;
       }
 
-      // Upload/remoção de imagem do PRODUTO-base
-      if (productId != null) {
-        try { await syncProductImage(productId); }
-        catch (imgErr: any) {
-          console.error('Falha ao sincronizar imagem do produto:', imgErr);
+      if (productId != null && (productPending.length || productDeleteIds.length)) {
+        try {
+          await syncProductGallery(productId);
+        } catch (imgErr: any) {
           setFormError(
-            imgErr?.response?.data?.error || 'Produto guardado, mas falhou o upload da imagem do produto.'
+            imgErr?.response?.data?.error || 'Produto guardado, mas falhou a galeria de imagens.'
           );
           setSaving(false);
           fetchProducts();
@@ -522,13 +522,13 @@ export default function InventoryTab() {
         }
       }
 
-      // Upload/remoção de imagem da VARIANTE (só em edit, com variant_id conhecido)
-      if (modalMode === 'edit' && editingProduct?.id != null) {
-        try { await syncVariantImage(editingProduct.id); }
-        catch (imgErr: any) {
-          console.error('Falha ao sincronizar imagem da variante:', imgErr);
+      if (modalMode === 'edit' && editingProduct?.id != null
+        && (variantPending.length || variantDeleteIds.length)) {
+        try {
+          await syncVariantGallery(editingProduct.id);
+        } catch (imgErr: any) {
           setFormError(
-            imgErr?.response?.data?.error || 'Variante guardada, mas falhou o upload da imagem.'
+            imgErr?.response?.data?.error || 'Variante guardada, mas falhou a galeria de imagens.'
           );
           setSaving(false);
           fetchProducts();
@@ -1049,44 +1049,47 @@ export default function InventoryTab() {
                 </div>
               )}
 
-              {/* IMAGEM DO PRODUTO-BASE (fallback partilhado por todas as variantes) */}
               {(modalMode === 'edit' || (modalMode === 'create' && createMode === 'new_product')) && (
-                <ImageZone
-                  title="Imagem do Produto"
-                  hint="Fallback partilhado por todas as variantes que não tenham foto própria. JPG/PNG/WEBP até 5 MB."
-                  preview={productImagePreview}
-                  inputRef={productFileRef}
-                  inputId="product-image-input"
-                  handlers={makeImageHandlers(
-                    productImageFile, setProductImageFile,
-                    productImagePreview, setProductImagePreview,
-                    setProductImageRemoved, productFileRef
-                  )}
+                <MultiImageGallery
+                  title="Fotos do produto"
+                  hint="Partilhadas por variantes sem galeria própria. Até 12 imagens · JPG/PNG/WEBP · 5 MB cada."
+                  existing={productImages}
+                  pending={productPending}
+                  deleteIds={productDeleteIds}
+                  onAddFiles={(files) => addPendingFiles(files, setProductPending)}
+                  onRemoveExisting={(id) => setProductDeleteIds((d) => [...d, id])}
+                  onRestoreExisting={(id) => setProductDeleteIds((d) => d.filter((x) => x !== id))}
+                  onRemovePending={(key) => {
+                    setProductPending((prev) => {
+                      const item = prev.find((p) => p.key === key);
+                      if (item?.preview.startsWith('blob:')) URL.revokeObjectURL(item.preview);
+                      return prev.filter((p) => p.key !== key);
+                    });
+                  }}
                 />
               )}
 
-              {/* IMAGEM DA VARIANTE (override específico — só em edit) */}
               {modalMode === 'edit' && (
                 <div className="rounded-2xl bg-amber-50/40 border border-amber-200/60 p-4 space-y-3">
-                  <ImageZone
-                    title={`Imagem desta variante (${selectedColorName || '—'} · ${form.size || '—'})`}
-                    hint={
-                      variantImagePreview
-                        ? 'Esta foto sobrepõe-se à do produto-base só para esta variante.'
-                        : 'Sem foto própria → usa a foto do produto acima.'
-                    }
-                    preview={variantImagePreview}
-                    inputRef={variantFileRef}
-                    inputId="variant-image-input"
+                  <MultiImageGallery
+                    title={`Fotos desta variante (${selectedColorName || '—'} · ${form.size || '—'})`}
+                    hint="Sobrepõem-se às fotos do produto. O cliente vê estas ao escolher cor/tamanho."
                     accent="amber"
-                    handlers={makeImageHandlers(
-                      variantImageFile, setVariantImageFile,
-                      variantImagePreview, setVariantImagePreview,
-                      setVariantImageRemoved, variantFileRef
-                    )}
+                    existing={variantImages}
+                    pending={variantPending}
+                    deleteIds={variantDeleteIds}
+                    onAddFiles={(files) => addPendingFiles(files, setVariantPending)}
+                    onRemoveExisting={(id) => setVariantDeleteIds((d) => [...d, id])}
+                    onRestoreExisting={(id) => setVariantDeleteIds((d) => d.filter((x) => x !== id))}
+                    onRemovePending={(key) => {
+                      setVariantPending((prev) => {
+                        const item = prev.find((p) => p.key === key);
+                        if (item?.preview.startsWith('blob:')) URL.revokeObjectURL(item.preview);
+                        return prev.filter((p) => p.key !== key);
+                      });
+                    }}
                   />
-                  {/* Aplicar a todas as variantes da mesma cor (atalho útil) */}
-                  {variantImageFile && selectedColorName && (
+                  {variantPending.length > 0 && selectedColorName && (
                     <label className="flex items-start gap-2 cursor-pointer text-[11px] text-amber-900">
                       <input
                         type="checkbox"
@@ -1095,36 +1098,34 @@ export default function InventoryTab() {
                         className="accent-amber-600 mt-0.5"
                       />
                       <span>
-                        <strong>Aplicar a todas as variantes da cor &quot;{selectedColorName}&quot;</strong> deste
-                        produto (útil porque tipicamente foto varia por cor, não por tamanho).
+                        <strong>Aplicar novas fotos a todas as variantes da cor &quot;{selectedColorName}&quot;</strong>
                       </span>
                     </label>
                   )}
                 </div>
               )}
 
-              {/* Upload de imagem da variante já na criação */}
               {modalMode === 'create' && createMode === 'new_variant' && (
                 <div className="rounded-2xl bg-amber-50/40 border border-amber-200/60 p-4 space-y-3">
-                  <ImageZone
-                    title={`Imagem desta variante (${selectedColorName || '—'} · ${form.size || '—'})`}
-                    hint={
-                      variantImagePreview
-                        ? 'Esta foto sobrepõe-se à do produto-base só para esta variante.'
-                        : 'Sem foto própria → usa a foto do produto.'
-                    }
-                    preview={variantImagePreview}
-                    inputRef={variantFileRef}
-                    inputId="variant-image-input"
+                  <MultiImageGallery
+                    title={`Fotos desta variante (${selectedColorName || '—'} · ${form.size || '—'})`}
+                    hint="Opcional. Sem fotos aqui → usa as do produto-base."
                     accent="amber"
-                    handlers={makeImageHandlers(
-                      variantImageFile, setVariantImageFile,
-                      variantImagePreview, setVariantImagePreview,
-                      setVariantImageRemoved, variantFileRef
-                    )}
+                    existing={[]}
+                    pending={variantPending}
+                    deleteIds={[]}
+                    onAddFiles={(files) => addPendingFiles(files, setVariantPending)}
+                    onRemoveExisting={() => {}}
+                    onRestoreExisting={() => {}}
+                    onRemovePending={(key) => {
+                      setVariantPending((prev) => {
+                        const item = prev.find((p) => p.key === key);
+                        if (item?.preview.startsWith('blob:')) URL.revokeObjectURL(item.preview);
+                        return prev.filter((p) => p.key !== key);
+                      });
+                    }}
                   />
-                  {/* Aplicar a todas as variantes da mesma cor (atalho útil) */}
-                  {variantImageFile && selectedColorName && (
+                  {variantPending.length > 0 && selectedColorName && (
                     <label className="flex items-start gap-2 cursor-pointer text-[11px] text-amber-900">
                       <input
                         type="checkbox"
@@ -1133,8 +1134,7 @@ export default function InventoryTab() {
                         className="accent-amber-600 mt-0.5"
                       />
                       <span>
-                        <strong>Aplicar a todas as variantes da cor &quot;{selectedColorName}&quot;</strong> deste
-                        produto (útil porque tipicamente foto varia por cor, não por tamanho).
+                        <strong>Aplicar a todas as variantes da cor &quot;{selectedColorName}&quot;</strong>
                       </span>
                     </label>
                   )}
@@ -1398,76 +1398,3 @@ function InventoryFilterSelect({
   );
 }
 
-// =====================================================
-// Componente interno reutilizado para as 2 zonas de imagem
-// (produto-base + variante específica) no modal.
-// =====================================================
-function ImageZone({
-  title,
-  hint,
-  preview,
-  inputRef,
-  inputId,
-  handlers,
-  accent = 'zinc',
-}: {
-  title: string;
-  hint: string;
-  preview: string | null;
-  inputRef: React.RefObject<HTMLInputElement | null>;
-  inputId: string;
-  handlers: {
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-    onRemove: () => void;
-  };
-  accent?: 'zinc' | 'amber';
-}) {
-  const labelClass =
-    accent === 'amber'
-      ? 'text-amber-900'
-      : 'text-zinc-500';
-
-  return (
-    <div>
-      <label className={`block text-[11px] font-bold uppercase tracking-wider mb-2 ${labelClass}`}>
-        {title}
-      </label>
-      <div className="flex items-center gap-4">
-        <div className="h-24 w-20 rounded-xl overflow-hidden border border-gray-200 bg-gradient-to-br from-zinc-50 to-zinc-100 flex items-center justify-center shrink-0">
-          {preview ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={preview} alt="Preview" className="h-full w-full object-cover" />
-          ) : (
-            <ImageIcon size={22} className="text-zinc-400" />
-          )}
-        </div>
-        <div className="flex-1 space-y-2">
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/avif,image/gif"
-            onChange={handlers.onChange}
-            className="hidden"
-            id={inputId}
-          />
-          <label
-            htmlFor={inputId}
-            className="inline-flex items-center gap-1.5 cursor-pointer px-3 py-1.5 rounded-lg text-xs font-bold border border-gray-200 hover:border-black hover:bg-zinc-50 transition"
-          >
-            <Upload size={13} /> {preview ? 'Trocar imagem' : 'Carregar imagem'}
-          </label>
-          {preview && (
-            <button
-              type="button"
-              onClick={handlers.onRemove}
-              className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 transition"
-            >
-              <Trash2 size={13} /> Remover
-            </button>
-          )}
-          <p className="text-[10px] text-zinc-500">{hint}</p>
-        </div>
-      </div>
-    </div>
-  );
-}

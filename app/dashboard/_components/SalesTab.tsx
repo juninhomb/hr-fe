@@ -10,7 +10,11 @@ import {
 import api from '../../../lib/api';
 import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
 import { getDefaultShippingFeeEur } from '../../../lib/defaultShippingFee';
-import { expedicaoPrintPath, isHomeDeliveryOrder } from '../../../lib/orderDelivery';
+import {
+  canExpedirOrPrintOrder,
+  isHomeDeliveryOrder,
+  openExpedicaoPrintTab,
+} from '../../../lib/orderDelivery';
 
 /** Cypress Ship2U pode demorar vários minutos — maior que o default do axios e alinhado com SHIP2U_CYPRESS_TIMEOUT_MS no backend. */
 const SHIP2U_CYPRESS_HTTP_TIMEOUT_MS = 650_000;
@@ -442,35 +446,37 @@ function OverviewPanel({
   };
 
   /**
-   * Entrega ao domicílio — fluxo em etapas (só um passo altera estado de cada vez):
-   * 1) Pago → «Expedir pedido»: marca expedido + imprime romaneio (não chama Ship2U).
-   * 2) Expedido → «Ship2U»: Cypress na plataforma (não muda estado no HR Store).
-   * 3) Expedido → «Enviar via CTT»: confirma envio após postar (muda para enviado).
+   * Impressão / expedição — disponível para qualquer pedido pago (entrega ou levantamento):
+   * 1) Pago → marca «Expedido» + abre romaneio.
+   * 2) Já expedido/enviado/entregue → só reabre o romaneio (reimpressão).
+   * Ship2U e CTT continuam só para entrega ao domicílio.
    */
   const handleMarkExpedited = async (o: Order) => {
-    if (o.status !== 'pago' || !isHomeDeliveryOrder(o)) {
-      toast('error', 'Só pedidos pagos com entrega podem ser expedidos.');
+    if (!canExpedirOrPrintOrder(o)) {
+      toast('error', 'Só pedidos pagos podem ser expedidos ou impressos.');
       return;
     }
 
     setActionId(o.id);
     try {
-      await api.post(`/${o.id}/mark-expedido`, {});
-      await fetchAll();
+      const wasPago = o.status === 'pago';
+      if (wasPago) {
+        await api.post(`/${o.id}/mark-expedido`, {});
+        await fetchAll();
+      }
 
-      const path = expedicaoPrintPath(o.id, { kiosk: true });
-      const absUrl =
-        typeof window !== 'undefined'
-          ? `${window.location.origin}${path.startsWith('/') ? '' : '/'}${path}`
-          : path;
+      openExpedicaoPrintTab(o.id);
 
-      // Nova aba / separador (sem dimensões — não é janela popup).
-      window.open(absUrl, '_blank', 'noopener,noreferrer');
-
-      toast(
-        'success',
-        `Pedido #${o.id} ficou «Expedido». Romaneio numa nova aba. Próximo: no menu ⋯ usa «Ship2U» se quiseres; quando postares, «Enviar via CTT».`,
-      );
+      if (wasPago) {
+        toast(
+          'success',
+          isHomeDeliveryOrder(o)
+            ? `Pedido #${o.id} ficou «Expedido». Romaneio numa nova aba. Próximo: «Ship2U» ou «Enviar via CTT» no menu ⋯.`
+            : `Pedido #${o.id} ficou «Expedido». Romaneio numa nova aba.`,
+        );
+      } else {
+        toast('success', `Recibo do pedido #${o.id} numa nova aba.`);
+      }
     } catch (err: any) {
       toast('error', err?.response?.data?.error || 'Erro ao marcar expedição');
     } finally {
@@ -884,8 +890,10 @@ function OrdersTable({
           </thead>
           <tbody className="divide-y divide-gray-50">
             {orders.map(o => {
+              const awaitingExpedir = o.status === 'pago';
               const needsShippingRow =
-                (o.status === 'pago' || o.status === 'expedido') && isHomeDeliveryOrder(o);
+                awaitingExpedir
+                || (o.status === 'expedido' && isHomeDeliveryOrder(o));
               return (
               <tr
                 key={o.id}
@@ -940,7 +948,7 @@ function OrdersTable({
                         <CheckCircle2 size={9} /> Entregue
                       </span>
                     )}
-                    {needsShippingRow && o.status === 'pago' && (
+                    {awaitingExpedir && (
                       <span
                         title="Pago — falta expedir (imprimir recibo)"
                         className="text-[9px] font-black bg-blue-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1"
@@ -1023,11 +1031,15 @@ function OrdersTable({
             disabled={current.status !== 'aguardando_pagamento'}
             onClick={() => { setOpenMenu(null); onConfirm(current); }}
           />
-          {current.status === 'pago' && isHomeDeliveryOrder(current) && (
+          {canExpedirOrPrintOrder(current) && (
             <DropItem
               icon={<Printer size={14} />}
-              label="Expedir pedido (imprimir)"
-              title="Passa o pedido a «Expedido» e abre o romaneio. Ship2U e CTT só ficam disponíveis no passo seguinte."
+              label={current.status === 'pago' ? 'Expedir pedido (imprimir)' : 'Imprimir recibo'}
+              title={
+                current.status === 'pago'
+                  ? 'Passa o pedido a «Expedido» e abre o romaneio. Entrega: depois Ship2U / CTT no menu.'
+                  : 'Abre o romaneio para reimprimir.'
+              }
               disabled={actionId === current.id}
               onClick={() => {
                 setOpenMenu(null);
@@ -2815,11 +2827,15 @@ function OrderDetailsModal({
               Libertar p/ levantamento
             </button>
           )}
-          {order && !loading && order.status === 'pago' && isHomeDeliveryOrder(order) && onMarkExpedited && (
+          {order && !loading && canExpedirOrPrintOrder(order) && onMarkExpedited && (
             <button
               type="button"
               disabled={expedirBusy}
-              title="Passa a «Expedido», abre o romaneio. Ship2U e CTT aparecem só depois deste passo."
+              title={
+                order.status === 'pago'
+                  ? 'Passa a «Expedido» e abre o romaneio. Entrega: depois Ship2U / CTT.'
+                  : 'Abre o romaneio para reimprimir.'
+              }
               onClick={async () => {
                 setExpedirBusy(true);
                 try {
@@ -2833,7 +2849,11 @@ function OrderDetailsModal({
               className="px-5 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {expedirBusy ? <RefreshCw className="animate-spin" size={16} /> : <Printer size={16} />}
-              {expedirBusy ? 'A expedir…' : 'Expedir pedido (imprimir)'}
+              {expedirBusy
+                ? 'A expedir…'
+                : order.status === 'pago'
+                  ? 'Expedir pedido (imprimir)'
+                  : 'Imprimir recibo'}
             </button>
           )}
           {order && !loading && order.status === 'expedido' && isHomeDeliveryOrder(order) && onRunShip2uCypress && (
