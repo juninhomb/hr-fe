@@ -518,10 +518,6 @@ function OverviewPanel({
   };
 
   const handleRunShip2uCypress = async (o: Order) => {
-    if (!isHomeDeliveryOrder(o)) {
-      toast('error', 'Ship2U só se aplica a pedidos com entrega ao domicílio.');
-      return;
-    }
     if (o.status !== 'expedido') {
       toast(
         'error',
@@ -1103,7 +1099,7 @@ function OrdersTable({
               }}
             />
           )}
-          {current.status === 'expedido' && isHomeDeliveryOrder(current) && (
+          {current.status === 'expedido' && !isTrocaOrder(current) && (
             <>
               <DropItem
                 icon={<Bot size={14} />}
@@ -2927,7 +2923,7 @@ function OrderDetailsModal({
                   : 'Imprimir recibo'}
             </button>
           )}
-          {order && !loading && order.status === 'expedido' && isHomeDeliveryOrder(order) && onRunShip2uCypress && (
+          {order && !loading && order.status === 'expedido' && !isTrocaOrder(order) && onRunShip2uCypress && (
             <button
               type="button"
               disabled={ship2uCypressBusy || ship2uBusyOrderId === order.id}
@@ -2948,7 +2944,7 @@ function OrderDetailsModal({
               {ship2uCypressBusy ? 'Ship2U em execução…' : 'Ship2U'}
             </button>
           )}
-          {order && !loading && order.status === 'expedido' && isHomeDeliveryOrder(order) && onShip && (
+          {order && !loading && order.status === 'expedido' && !isTrocaOrder(order) && onShip && (
             <button
               type="button"
               disabled={shipBusy}
