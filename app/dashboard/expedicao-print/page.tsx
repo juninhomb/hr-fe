@@ -18,6 +18,13 @@ type OrderItem = {
   unit_price?: number | string | null;
 };
 
+type ReturnedItem = {
+  sku: string;
+  quantity: number | string;
+  unit_price: number | string;
+  source_order_item_id?: number;
+};
+
 type OrderPayload = {
   id: number;
   status: string;
@@ -35,6 +42,8 @@ type OrderPayload = {
   is_delivery?: boolean | number | string;
   discount_amount?: number | string | null;
   coupon_code?: string | null;
+  parent_order_id?: number | null;
+  returned_items?: ReturnedItem[] | null;
 };
 
 function formatPtDate(iso: string): string {
@@ -110,6 +119,27 @@ function ExpedicaoPrintInner() {
       0,
     );
   }, [order]);
+
+  const isTroca = String(order?.origin || '').toLowerCase() === 'troca';
+
+  const returnedItems: ReturnedItem[] = useMemo(() => {
+    if (!order?.returned_items) return [];
+    if (Array.isArray(order.returned_items)) return order.returned_items;
+    try {
+      const parsed = JSON.parse(order.returned_items as unknown as string);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }, [order]);
+
+  const returnedTotal = useMemo(
+    () => returnedItems.reduce(
+      (a, r) => a + Number(r.unit_price || 0) * Number(r.quantity || 0),
+      0,
+    ),
+    [returnedItems],
+  );
 
   const isDelivery =
     order &&
@@ -313,15 +343,20 @@ function ExpedicaoPrintInner() {
 
       {order && !loading && !error && (
         <div className="exp-receipt-wrap print:!min-h-0 print:!p-0 print:!bg-white">
-          {!isDelivery && (
+          {!isDelivery && !isTroca && (
             <p className="exp-no-print w-full max-w-md mx-auto px-2 text-center text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4">
               Este pedido não está marcado como entrega ao domicílio — confirma no pedido se o documento faz sentido.
             </p>
           )}
           <div className="exp-receipt-outer rounded-none overflow-hidden print:!rounded-none">
           <div className="exp-receipt bg-white print:bg-white px-1 py-2 rounded-none">
-            <h1>EXPEDIÇÃO</h1>
-            <p className="text-center font-black mt-0 mb-1">Pedido #{order.id}</p>
+            <h1>{isTroca ? 'RECIBO DE TROCA' : 'EXPEDIÇÃO'}</h1>
+            <p className="text-center font-black mt-0 mb-1">
+              {isTroca ? `Troca #${order.id}` : `Pedido #${order.id}`}
+            </p>
+            {isTroca && order.parent_order_id != null && (
+              <p className="muted text-center">do pedido #{order.parent_order_id}</p>
+            )}
             <p className="muted text-center">{formatPtDate(order.created_at)}</p>
             <p className="muted text-center">
               {(order.origin || '—').toUpperCase()} · {order.payment_method || '—'}
@@ -337,20 +372,49 @@ function ExpedicaoPrintInner() {
             {order.whatsapp_number && <p className="muted">{order.whatsapp_number}</p>}
             {order.email && <p className="muted">{order.email}</p>}
 
-            <hr className="rule" />
-
-            <p className="font-black text-[10px] uppercase tracking-wide mt-1 mb-1">Envio</p>
-            <p>{order.address?.trim() || '— sem morada —'}</p>
-            {order.customer_notes?.trim() && (
+            {!isTroca && (
               <>
-                <p className="font-black text-[10px] uppercase mt-2 mb-0">Notas</p>
-                <p className="muted whitespace-pre-wrap">{order.customer_notes.trim()}</p>
+                <hr className="rule" />
+                <p className="font-black text-[10px] uppercase tracking-wide mt-1 mb-1">Envio</p>
+                <p>{order.address?.trim() || '— sem morada —'}</p>
+                {order.customer_notes?.trim() && (
+                  <>
+                    <p className="font-black text-[10px] uppercase mt-2 mb-0">Notas</p>
+                    <p className="muted whitespace-pre-wrap">{order.customer_notes.trim()}</p>
+                  </>
+                )}
+              </>
+            )}
+
+            {isTroca && returnedItems.length > 0 && (
+              <>
+                <hr className="rule" />
+                <p className="font-black text-[10px] uppercase tracking-wide mb-1">Devolvidos</p>
+                {returnedItems.map((r, idx) => (
+                  <div key={`${r.sku}-${idx}`} className="exp-line">
+                    <p className="font-bold">
+                      {r.quantity}× <span className="font-mono">{r.sku}</span>
+                    </p>
+                    <div className="row font-mono text-[10px]">
+                      <span />
+                      <span>
+                        − € {(Number(r.unit_price || 0) * Number(r.quantity || 0)).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+                <div className="row font-mono">
+                  <span>Subtotal devolvido</span>
+                  <span>− € {returnedTotal.toFixed(2)}</span>
+                </div>
               </>
             )}
 
             <hr className="rule" />
 
-            <p className="font-black text-[10px] uppercase tracking-wide mb-1">Artigos</p>
+            <p className="font-black text-[10px] uppercase tracking-wide mb-1">
+              {isTroca ? 'Novos artigos' : 'Artigos'}
+            </p>
             {(order.items || []).map((it) => (
               <div key={it.id} className="exp-line">
                 <p className="font-bold">
@@ -372,30 +436,51 @@ function ExpedicaoPrintInner() {
 
             <hr className="rule" />
 
-            <div className="row font-mono">
-              <span>Subtotal</span>
-              <span>€ {itemsTotal.toFixed(2)}</span>
-            </div>
-            {Number(order.discount_amount || 0) > 0.004 && (
-              <div className="row font-mono">
-                <span>Desc.{order.coupon_code ? ` (${order.coupon_code})` : ''}</span>
-                <span>− € {Number(order.discount_amount || 0).toFixed(2)}</span>
-              </div>
+            {isTroca ? (
+              <>
+                <div className="row font-mono">
+                  <span>Subtotal novos</span>
+                  <span>€ {itemsTotal.toFixed(2)}</span>
+                </div>
+                <div className="row font-mono">
+                  <span>Devolvido</span>
+                  <span>− € {returnedTotal.toFixed(2)}</span>
+                </div>
+                <div className="row font-black mt-2 text-[12px]">
+                  <span>DIFERENÇA</span>
+                  <span>€ {Number(order.total_amount || 0).toFixed(2)}</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="row font-mono">
+                  <span>Subtotal</span>
+                  <span>€ {itemsTotal.toFixed(2)}</span>
+                </div>
+                {Number(order.discount_amount || 0) > 0.004 && (
+                  <div className="row font-mono">
+                    <span>Desc.{order.coupon_code ? ` (${order.coupon_code})` : ''}</span>
+                    <span>− € {Number(order.discount_amount || 0).toFixed(2)}</span>
+                  </div>
+                )}
+                {Number(order.shipping_fee || 0) > 0.004 && (
+                  <div className="row font-mono">
+                    <span>Portes</span>
+                    <span>€ {Number(order.shipping_fee || 0).toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="row font-black mt-2 text-[12px]">
+                  <span>TOTAL</span>
+                  <span>€ {Number(order.total_amount || 0).toFixed(2)}</span>
+                </div>
+              </>
             )}
-            {Number(order.shipping_fee || 0) > 0.004 && (
-              <div className="row font-mono">
-                <span>Portes</span>
-                <span>€ {Number(order.shipping_fee || 0).toFixed(2)}</span>
-              </div>
-            )}
-            <div className="row font-black mt-2 text-[12px]">
-              <span>TOTAL</span>
-              <span>€ {Number(order.total_amount || 0).toFixed(2)}</span>
-            </div>
 
             <hr className="rule" />
             <p className="muted text-[8px] text-center mt-2 px-1">
-              Controlo interno — após embalar, marcar «Enviar via CTT» no admin.
+              {isTroca
+                ? 'Recibo de troca — controlo interno.'
+                : 'Controlo interno — após embalar, marcar «Enviar via CTT» no admin.'}
             </p>
           </div>
           </div>

@@ -6,7 +6,7 @@ import {
   Star, Eye, EyeOff, Filter, FileSpreadsheet,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import api from '../../../lib/api';
+import api, { resolveImageUrl } from '../../../lib/api';
 import { parseInventoryImportWorkbook } from '../../../lib/inventoryExcel';
 import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
 import { suggestCategoryId } from '../../../lib/categorySuggester';

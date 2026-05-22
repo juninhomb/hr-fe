@@ -5,8 +5,9 @@ import {
   Clock, MessageCircle, Store, AlertCircle, Package, ArrowLeft,
   TrendingUp, Euro, Calendar, Filter, Eye, MoreHorizontal, Send,
   MapPin, Mail, Phone, StickyNote, PackageCheck, CheckCircle2,
-  Tag, CreditCard, Copy, ExternalLink, Printer, Bot,
+  Tag, CreditCard, Copy, ExternalLink, Printer, Bot, RotateCcw,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import api from '../../../lib/api';
 import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
 import { getDefaultShippingFeeEur } from '../../../lib/defaultShippingFee';
@@ -87,6 +88,10 @@ type Order = {
   coupon_code?: string | null;
   /** Valor do desconto em EUR sobre o subtotal de artigos. */
   discount_amount?: number | string | null;
+  /** Pedido original quando esta linha é uma troca (origin='troca'). */
+  parent_order_id?: number | null;
+  /** Nº de trocas criadas a partir deste pedido (apenas pedidos originais). */
+  trocas_count?: number;
 };
 
 /** Site + recolha em loja (sem envio ao domicílio). */
@@ -98,6 +103,33 @@ function isWebsiteStorePickup(o: Pick<Order, 'origin' | 'is_delivery'>): boolean
     || o.is_delivery === 1
     || o.is_delivery === '1';
   return orig === 'website' && !del;
+}
+
+/**
+ * PDV na loja física sem entrega ao domicílio — venda finalizada na hora,
+ * cliente leva a peça consigo. Não passa por expedição, apenas imprime recibo.
+ */
+function isPhysicalStoreTakeaway(o: Pick<Order, 'origin' | 'is_delivery'>): boolean {
+  const orig = String(o.origin || '').trim().toLowerCase();
+  const del =
+    o.is_delivery === true
+    || o.is_delivery === 'true'
+    || o.is_delivery === 1
+    || o.is_delivery === '1';
+  return orig === 'loja_fisica' && !del;
+}
+
+/** Pedido elegível para iniciar uma TROCA. Bloqueia trocas-de-trocas. */
+function canCreateTroca(o: Pick<Order, 'status' | 'origin'>): boolean {
+  const s = String(o.status || '').trim().toLowerCase();
+  const orig = String(o.origin || '').trim().toLowerCase();
+  if (orig === 'troca') return false;
+  return s === 'pago' || s === 'expedido' || s === 'enviado' || s === 'entregue';
+}
+
+/** O próprio pedido é uma troca — não precisa de expedição. */
+function isTrocaOrder(o: Pick<Order, 'origin'>): boolean {
+  return String(o.origin || '').trim().toLowerCase() === 'troca';
 }
 
 type StripeLinkModalProps = {
@@ -460,14 +492,15 @@ function OverviewPanel({
     setActionId(o.id);
     try {
       const wasPago = o.status === 'pago';
-      if (wasPago) {
+      const skipExpedido = isPhysicalStoreTakeaway(o) || isTrocaOrder(o);
+      if (wasPago && !skipExpedido) {
         await api.post(`/${o.id}/mark-expedido`, {});
         await fetchAll();
       }
 
       openExpedicaoPrintTab(o.id);
 
-      if (wasPago) {
+      if (wasPago && !skipExpedido) {
         toast(
           'success',
           isHomeDeliveryOrder(o)
@@ -890,7 +923,10 @@ function OrdersTable({
           </thead>
           <tbody className="divide-y divide-gray-50">
             {orders.map(o => {
-              const awaitingExpedir = o.status === 'pago';
+              const awaitingExpedir =
+                o.status === 'pago'
+                && !isPhysicalStoreTakeaway(o)
+                && !isTrocaOrder(o);
               const needsShippingRow =
                 awaitingExpedir
                 || (o.status === 'expedido' && isHomeDeliveryOrder(o));
@@ -964,6 +1000,22 @@ function OrdersTable({
                         <Send size={9} /> CTT
                       </span>
                     )}
+                    {Number(o.trocas_count || 0) > 0 && (
+                      <span
+                        title={`Este pedido teve ${o.trocas_count} troca${Number(o.trocas_count) > 1 ? 's' : ''} — clica para ver detalhes.`}
+                        className="text-[9px] font-black bg-violet-100 text-violet-800 border border-violet-300 px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1"
+                      >
+                        <RotateCcw size={9} /> Trocada{Number(o.trocas_count) > 1 ? ` (${o.trocas_count})` : ''}
+                      </span>
+                    )}
+                    {isTrocaOrder(o) && o.parent_order_id != null && (
+                      <span
+                        title={`Troca do pedido #${o.parent_order_id}`}
+                        className="text-[9px] font-black bg-violet-600 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1"
+                      >
+                        <RotateCcw size={9} /> ← #{o.parent_order_id}
+                      </span>
+                    )}
                   </div>
                 </td>
                 <td className="px-6 py-4 text-xs text-zinc-500">{o.items?.length || 0}</td>
@@ -1034,9 +1086,13 @@ function OrdersTable({
           {canExpedirOrPrintOrder(current) && (
             <DropItem
               icon={<Printer size={14} />}
-              label={current.status === 'pago' ? 'Expedir pedido (imprimir)' : 'Imprimir recibo'}
+              label={
+                current.status === 'pago' && !isPhysicalStoreTakeaway(current) && !isTrocaOrder(current)
+                  ? 'Expedir pedido (imprimir)'
+                  : 'Imprimir recibo'
+              }
               title={
-                current.status === 'pago'
+                current.status === 'pago' && !isPhysicalStoreTakeaway(current) && !isTrocaOrder(current)
                   ? 'Passa o pedido a «Expedido» e abre o romaneio. Entrega: depois Ship2U / CTT no menu.'
                   : 'Abre o romaneio para reimprimir.'
               }
@@ -2481,6 +2537,7 @@ function OrderDetailsModal({
   /** Marcar envio CTT (só com estado expedido). */
   onShip?: (o: Order) => void | Promise<void>;
 }) {
+  const router = useRouter();
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2827,12 +2884,26 @@ function OrderDetailsModal({
               Libertar p/ levantamento
             </button>
           )}
+          {order && !loading && canCreateTroca(order) && (
+            <button
+              type="button"
+              title="Inicia uma troca: devolve artigos deste pedido e adiciona novos."
+              onClick={() => {
+                onClose();
+                router.push(`/dashboard/troca/${order.id}`);
+              }}
+              className="px-5 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 flex items-center gap-2"
+            >
+              <RotateCcw size={16} />
+              Trocar
+            </button>
+          )}
           {order && !loading && canExpedirOrPrintOrder(order) && onMarkExpedited && (
             <button
               type="button"
               disabled={expedirBusy}
               title={
-                order.status === 'pago'
+                order.status === 'pago' && !isPhysicalStoreTakeaway(order) && !isTrocaOrder(order)
                   ? 'Passa a «Expedido» e abre o romaneio. Entrega: depois Ship2U / CTT.'
                   : 'Abre o romaneio para reimprimir.'
               }
@@ -2850,8 +2921,8 @@ function OrderDetailsModal({
             >
               {expedirBusy ? <RefreshCw className="animate-spin" size={16} /> : <Printer size={16} />}
               {expedirBusy
-                ? 'A expedir…'
-                : order.status === 'pago'
+                ? (isPhysicalStoreTakeaway(order) ? 'A imprimir…' : 'A expedir…')
+                : order.status === 'pago' && !isPhysicalStoreTakeaway(order) && !isTrocaOrder(order)
                   ? 'Expedir pedido (imprimir)'
                   : 'Imprimir recibo'}
             </button>
