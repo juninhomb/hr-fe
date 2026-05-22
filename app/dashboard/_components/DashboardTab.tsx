@@ -178,7 +178,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
           tone={((stats?.low_stock_count ?? 0) + (stats?.out_of_stock_count ?? 0)) > 0 ? 'red' : 'zinc'}
           subtitle={
             stats
-              ? `${stats.out_of_stock_count} esgotadas · ${stats.low_stock_count} baixo (1–5 un.)`
+              ? `${stats.out_of_stock_count} esgotadas · ${stats.low_stock_count} baixo (1–2 un.)`
               : 'A carregar…'
           }
           onClick={() => go('inventory')}
@@ -319,7 +319,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
               <h3 className="font-bold text-base flex items-center gap-2">
                 <AlertCircle size={16} className="text-red-500" /> Stock crítico
               </h3>
-              <p className="text-[11px] text-zinc-500">Esgotadas (0) e baixo stock (1–5 un.), como no inventário</p>
+              <p className="text-[11px] text-zinc-500">Esgotadas (0) e baixo stock (1–2 un.), como no inventário</p>
             </div>
             <button onClick={() => go('inventory')} className="text-[11px] text-zinc-500 hover:text-black flex items-center gap-1">
               Repor <ArrowRight size={12} />
@@ -673,7 +673,7 @@ function LowStockList({ data }: { data: DashboardStats['low_stock'] }) {
   if (!data.length) {
     return (
       <p className="text-center text-xs text-emerald-600 py-8">
-        ✓ Nenhuma variante com stock ≤ 5 unidades.
+        ✓ Nenhuma variante com stock ≤ 2 unidades.
       </p>
     );
   }

@@ -1500,7 +1500,7 @@ function PDVPanel({
                   <div className="flex items-start justify-between mb-2">
                     <Package size={18} className="text-zinc-400" />
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                      stock <= 5 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'
+                      stock <= 2 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'
                     }`}>
                       {stock} un.
                     </span>

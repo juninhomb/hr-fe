@@ -252,8 +252,8 @@ export default function InventoryTab() {
       if (filterVisibility === 'hidden' && visible) return false;
       const stock = Number(p.stock) || 0;
       if (filterStock === 'out' && stock !== 0) return false;
-      if (filterStock === 'low' && (stock < 1 || stock > 5)) return false;
-      if (filterStock === 'ok' && stock <= 5) return false;
+      if (filterStock === 'low' && (stock < 1 || stock > 2)) return false;
+      if (filterStock === 'ok' && stock <= 2) return false;
       if (filterFeatured === 'yes' && !p.is_featured) return false;
       if (filterFeatured === 'no' && p.is_featured) return false;
       return true;
@@ -748,8 +748,8 @@ export default function InventoryTab() {
                 options={[
                   { v: 'all', l: 'Qualquer' },
                   { v: 'out', l: 'Sem stock (0)' },
-                  { v: 'low', l: 'Baixo (1–5)' },
-                  { v: 'ok', l: 'OK (mais de 5)' },
+                  { v: 'low', l: 'Baixo (1–2)' },
+                  { v: 'ok', l: 'OK (mais de 2)' },
                 ]}
               />
               <InventoryFilterSelect
@@ -840,7 +840,7 @@ export default function InventoryTab() {
                     </td>
                     <td className="px-6 py-5 text-center">
                       <span className={`px-4 py-1.5 rounded-full text-[11px] font-black ${
-                        Number(item.stock) <= 5 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'
+                        Number(item.stock) <= 2 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'
                       }`}>
                         {item.stock} UN.
                       </span>
