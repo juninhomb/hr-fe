@@ -39,6 +39,15 @@ api.interceptors.request.use((config) => {
       config.headers.Authorization = `Bearer ${token}`;
     }
   }
+  // FormData: o browser/axios deve definir Content-Type com boundary.
+  // Definir "multipart/form-data" à mão quebra uploads (multer não recebe ficheiros).
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+    const h = config.headers as Record<string, unknown> | undefined;
+    if (h) {
+      delete h['Content-Type'];
+      delete h['content-type'];
+    }
+  }
   return config;
 });
 
