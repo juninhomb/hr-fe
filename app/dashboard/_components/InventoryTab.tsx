@@ -61,6 +61,7 @@ export default function InventoryTab() {
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
   const [compressingFiles, setCompressingFiles] = useState(0);
+  const [uploadProgress, setUploadProgress] = useState<{ pct: number; totalBytes: number } | null>(null);
   const [baseProducts, setBaseProducts] = useState<BaseProduct[]>([]);
   const [catalogColors, setCatalogColors] = useState<CatalogColor[]>([]);
 
@@ -411,6 +412,11 @@ export default function InventoryTab() {
     }
   };
 
+  /** Limite prudente para o payload total — bem abaixo do que o nginx aceita em prod (80 MB),
+   *  para evitar 413 em proxies intermediários ou ligações instáveis. */
+  const MAX_UPLOAD_PAYLOAD_BYTES = 40 * 1024 * 1024; // 40 MB
+  const UPLOAD_TIMEOUT_MS = 120_000; // 2 min
+
   const uploadPendingGallery = async (
     entity: 'products' | 'variants',
     entityId: number,
@@ -418,23 +424,48 @@ export default function InventoryTab() {
     opts?: { applyToColor?: boolean },
   ) => {
     if (!pending.length) return;
+
+    // Pre-flight: rejeita ANTES de atravessar nginx se o payload exceder o orçamento.
+    const totalBytes = pending.reduce((a, p) => a + p.file.size, 0);
+    if (totalBytes > MAX_UPLOAD_PAYLOAD_BYTES) {
+      const mb = (totalBytes / 1024 / 1024).toFixed(1);
+      throw new Error(
+        `Carregamento demasiado grande (${mb} MB). Reduz a quantidade de imagens ou volta a comprimir (máx ~40 MB total).`,
+      );
+    }
+
     const fd = new FormData();
     for (const p of pending) fd.append('images', p.file);
     if (opts?.applyToColor) fd.append('applyToColor', 'true');
-    await api.post(`/${entity}/${entityId}/images`, fd);
+
+    await api.post(`/${entity}/${entityId}/images`, fd, {
+      timeout: UPLOAD_TIMEOUT_MS,
+      onUploadProgress: (evt) => {
+        if (evt.total) {
+          const pct = Math.round((evt.loaded / evt.total) * 100);
+          setUploadProgress({ pct, totalBytes: evt.total });
+        }
+      },
+    });
+    setUploadProgress(null);
   };
 
   const syncProductGallery = async (productId: number) => {
-    for (const imageId of productDeleteIds) {
-      await api.delete(`/products/${productId}/images/${imageId}`);
-    }
+    // DELETEs em paralelo: latência ÷ N em vez de × N.
+    await Promise.all(
+      productDeleteIds.map((imageId) =>
+        api.delete(`/products/${productId}/images/${imageId}`),
+      ),
+    );
     await uploadPendingGallery('products', productId, productPending);
   };
 
   const syncVariantGallery = async (variantId: number) => {
-    for (const imageId of variantDeleteIds) {
-      await api.delete(`/variants/${variantId}/images/${imageId}`);
-    }
+    await Promise.all(
+      variantDeleteIds.map((imageId) =>
+        api.delete(`/variants/${variantId}/images/${imageId}`),
+      ),
+    );
     await uploadPendingGallery('variants', variantId, variantPending, {
       applyToColor: variantApplyToColor,
     });
@@ -460,6 +491,7 @@ export default function InventoryTab() {
     }
 
     setSaving(true);
+    setUploadProgress(null);
     try {
       let productId: number | null = null;
       let newVariantId: number | null = null;
@@ -552,9 +584,10 @@ export default function InventoryTab() {
       resetForm();
       fetchProducts();
     } catch (err: any) {
-      setFormError(err?.response?.data?.error || 'Erro ao guardar produto');
+      setFormError(err?.response?.data?.error || err?.message || 'Erro ao guardar produto');
     } finally {
       setSaving(false);
+      setUploadProgress(null);
     }
   };
 
@@ -1320,6 +1353,25 @@ export default function InventoryTab() {
                   <RefreshCw size={12} className="animate-spin" />
                   A comprimir {compressingFiles} imagem{compressingFiles > 1 ? 'ns' : ''}…
                 </p>
+              )}
+              {uploadProgress && (
+                <div className="bg-zinc-50 border border-gray-100 px-4 py-2 rounded-xl text-xs">
+                  <div className="flex items-center justify-between mb-1 font-semibold text-zinc-700">
+                    <span className="flex items-center gap-2">
+                      <Upload size={12} />
+                      A enviar imagens — {uploadProgress.pct}%
+                    </span>
+                    <span className="font-mono text-zinc-500">
+                      {(uploadProgress.totalBytes / 1024 / 1024).toFixed(1)} MB
+                    </span>
+                  </div>
+                  <div className="h-1.5 bg-zinc-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 transition-[width] duration-150"
+                      style={{ width: `${uploadProgress.pct}%` }}
+                    />
+                  </div>
+                </div>
               )}
               {formError && (
                 <p className="text-red-500 text-xs font-semibold bg-red-50 px-4 py-2 rounded-xl">{formError}</p>
