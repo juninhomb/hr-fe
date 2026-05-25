@@ -10,6 +10,7 @@ import api, { resolveImageUrl } from '../../../lib/api';
 import { parseInventoryImportWorkbook } from '../../../lib/inventoryExcel';
 import { layoutFixedActionMenu } from '../../../lib/actionMenuPosition';
 import { suggestCategoryId } from '../../../lib/categorySuggester';
+import { compressImages } from '../../../lib/imageCompress';
 import MultiImageGallery, {
   type GalleryImage,
   type PendingImage,
@@ -59,6 +60,7 @@ export default function InventoryTab() {
   const [variantApplyToColor, setVariantApplyToColor] = useState(false);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [compressingFiles, setCompressingFiles] = useState(0);
   const [baseProducts, setBaseProducts] = useState<BaseProduct[]>([]);
   const [catalogColors, setCatalogColors] = useState<CatalogColor[]>([]);
 
@@ -375,25 +377,37 @@ export default function InventoryTab() {
     return suggestCategoryId(form.name, categories);
   }, [form.name, categories]);
 
-  const addPendingFiles = (
+  const addPendingFiles = async (
     files: File[],
     setPending: React.Dispatch<React.SetStateAction<PendingImage[]>>,
   ) => {
-    const valid: PendingImage[] = [];
-    for (const f of files) {
-      if (f.size > 5 * 1024 * 1024) {
-        setFormError('Cada imagem: máximo 5 MB.');
-        continue;
+    if (!files.length) return;
+    setCompressingFiles((n) => n + files.length);
+    try {
+      const results = await compressImages(files);
+      const valid: PendingImage[] = [];
+      let oversize = false;
+      for (const r of results) {
+        if (r.file.size > 5 * 1024 * 1024) {
+          oversize = true;
+          continue;
+        }
+        valid.push({
+          key: `p-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          file: r.file,
+          preview: URL.createObjectURL(r.file),
+        });
       }
-      valid.push({
-        key: `p-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        file: f,
-        preview: URL.createObjectURL(f),
-      });
-    }
-    if (valid.length) {
-      setPending((prev) => [...prev, ...valid]);
-      setFormError('');
+      if (oversize) {
+        setFormError('Pelo menos 1 imagem ultrapassa 5 MB mesmo após compressão. Reduz a resolução antes de carregar.');
+      } else if (valid.length) {
+        setFormError('');
+      }
+      if (valid.length) {
+        setPending((prev) => [...prev, ...valid]);
+      }
+    } finally {
+      setCompressingFiles((n) => Math.max(0, n - files.length));
     }
   };
 
@@ -1303,6 +1317,12 @@ export default function InventoryTab() {
                 />
               </div>
 
+              {compressingFiles > 0 && (
+                <p className="text-zinc-700 text-xs font-semibold bg-zinc-50 border border-gray-100 px-4 py-2 rounded-xl flex items-center gap-2">
+                  <RefreshCw size={12} className="animate-spin" />
+                  A comprimir {compressingFiles} imagem{compressingFiles > 1 ? 'ns' : ''}…
+                </p>
+              )}
               {formError && (
                 <p className="text-red-500 text-xs font-semibold bg-red-50 px-4 py-2 rounded-xl">{formError}</p>
               )}
@@ -1317,14 +1337,16 @@ export default function InventoryTab() {
                 </button>
                 <button
                   type="submit"
-                  disabled={saving || skuConflict}
+                  disabled={saving || skuConflict || compressingFiles > 0}
                   className="flex-1 bg-black text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-zinc-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {saving
                     ? 'A guardar...'
-                    : modalMode === 'create'
-                      ? (createMode === 'new_product' ? 'Criar Produto' : 'Adicionar Variante')
-                      : 'Guardar'}
+                    : compressingFiles > 0
+                      ? 'A comprimir imagens…'
+                      : modalMode === 'create'
+                        ? (createMode === 'new_product' ? 'Criar Produto' : 'Adicionar Variante')
+                        : 'Guardar'}
                 </button>
               </div>
             </form>
