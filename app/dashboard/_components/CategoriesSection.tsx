@@ -174,7 +174,6 @@ export default function CategoriesSection() {
           const fd = new FormData();
           fd.append('image', editing.imageFile);
           await api.post(`/categories/${categoryId}/image`, fd, {
-            headers: { 'Content-Type': 'multipart/form-data' },
           });
         } else if (editing.imageRemoved) {
           await api.delete(`/categories/${categoryId}/image`);

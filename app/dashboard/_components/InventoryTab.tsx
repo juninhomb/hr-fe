@@ -421,9 +421,7 @@ export default function InventoryTab() {
     const fd = new FormData();
     for (const p of pending) fd.append('images', p.file);
     if (opts?.applyToColor) fd.append('applyToColor', 'true');
-    await api.post(`/${entity}/${entityId}/images`, fd, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    await api.post(`/${entity}/${entityId}/images`, fd);
   };
 
   const syncProductGallery = async (productId: number) => {
