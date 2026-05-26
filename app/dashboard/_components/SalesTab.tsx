@@ -404,6 +404,12 @@ function OverviewPanel({
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState<number | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>(currentYearMonth());
+  // Filtros estilo Pedidos Pendentes — operam sobre `filteredHistory` (após mês).
+  const [search, setSearch] = useState('');
+  const [filterOrigin, setFilterOrigin] = useState<'all' | 'whatsapp' | 'website' | 'loja_fisica' | 'troca'>('all');
+  const [filterPayment, setFilterPayment] = useState<string>('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'aguardando_pagamento' | 'pago' | 'expedido' | 'enviado' | 'entregue' | 'cancelado'>('all');
+  const [filterItems, setFilterItems] = useState<'all' | 'with' | 'without'>('all');
   /** Durante o POST Ship2U (espera pelo Cypress no servidor). */
   const [ship2uBusyOrderId, setShip2uBusyOrderId] = useState<number | null>(null);
   const [detailsId, setDetailsId] = useState<number | null>(null);
@@ -613,6 +619,41 @@ function OverviewPanel({
     });
   }, [history, selectedMonth]);
 
+  /** Lista visível na tabela — aplica filtros sobre `filteredHistory` (mês). */
+  const displayedHistory = useMemo(() => {
+    return filteredHistory.filter(o => {
+      if (filterOrigin !== 'all' && (o.origin || '') !== filterOrigin) return false;
+      if (filterPayment !== 'all' && (o.payment_method || '') !== filterPayment) return false;
+      if (filterStatus !== 'all' && o.status !== filterStatus) return false;
+      if (filterItems === 'with' && (!o.items || o.items.length === 0)) return false;
+      if (filterItems === 'without' && o.items && o.items.length > 0) return false;
+      if (search) {
+        const s = search.toLowerCase();
+        const hit =
+          (o.full_name || '').toLowerCase().includes(s)
+          || (o.whatsapp_number || '').includes(s)
+          || String(o.id).includes(s)
+          || (o.items || []).some(it => (it.sku || '').toLowerCase().includes(s));
+        if (!hit) return false;
+      }
+      return true;
+    });
+  }, [filteredHistory, filterOrigin, filterPayment, filterStatus, filterItems, search]);
+
+  /** Métodos de pagamento que existem nos pedidos do mês (popular dropdown dinamicamente). */
+  const overviewPaymentOptions = useMemo(() => {
+    const set = new Set<string>();
+    filteredHistory.forEach(o => o.payment_method && set.add(o.payment_method));
+    return Array.from(set);
+  }, [filteredHistory]);
+
+  const overviewFiltersActive =
+    Boolean(search)
+    || filterOrigin !== 'all'
+    || filterPayment !== 'all'
+    || filterStatus !== 'all'
+    || filterItems !== 'all';
+
   const stats = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const todayOrders = history.filter(o => new Date(o.created_at) >= today);
@@ -735,14 +776,78 @@ function OverviewPanel({
         </button>
       </div>
 
+      {/* Barra de filtros (igual aos Pedidos Pendentes) */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-4 py-3 flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-1 text-xs font-bold text-zinc-500 shrink-0">
+          <Filter size={12} /> FILTROS
+        </div>
+
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="ID, nome, whatsapp ou SKU..."
+            className="w-full pl-8 pr-3 py-2 rounded-xl border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-black"
+          />
+        </div>
+
+        <Select label="Origem" value={filterOrigin} onChange={setFilterOrigin as any} options={[
+          { v: 'all', l: 'Todas' },
+          { v: 'whatsapp', l: 'WhatsApp' },
+          { v: 'website', l: 'Website' },
+          { v: 'loja_fisica', l: 'Loja Física' },
+          { v: 'troca', l: 'Troca' },
+        ]} />
+
+        <Select label="Pagamento" value={filterPayment} onChange={setFilterPayment} options={[
+          { v: 'all', l: 'Todos' },
+          ...overviewPaymentOptions.map(p => ({ v: p, l: p })),
+        ]} />
+
+        <Select label="Status" value={filterStatus} onChange={setFilterStatus as any} options={[
+          { v: 'all', l: 'Todos' },
+          { v: 'aguardando_pagamento', l: 'Aguardando' },
+          { v: 'pago', l: 'Pago' },
+          { v: 'expedido', l: 'Expedido' },
+          { v: 'enviado', l: 'Enviado' },
+          { v: 'entregue', l: 'Entregue' },
+          { v: 'cancelado', l: 'Cancelado' },
+        ]} />
+
+        <Select label="Itens" value={filterItems} onChange={setFilterItems as any} options={[
+          { v: 'all', l: 'Todos' },
+          { v: 'with', l: 'Com items' },
+          { v: 'without', l: 'Sem items' },
+        ]} />
+
+        {overviewFiltersActive && (
+          <button
+            onClick={() => {
+              setSearch('');
+              setFilterOrigin('all');
+              setFilterPayment('all');
+              setFilterStatus('all');
+              setFilterItems('all');
+            }}
+            className="text-xs text-zinc-500 hover:text-black flex items-center gap-1"
+          >
+            <X size={12} /> limpar
+          </button>
+        )}
+      </div>
+
       {/* Histórico recente */}
       <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-visible">
         <div className="p-6 border-b border-gray-50 flex items-center gap-2">
           <h3 className="font-bold text-lg flex-1">Vendas — {monthLabel(selectedMonth)}</h3>
-          <span className="text-xs text-zinc-400">{filteredHistory.length} registos</span>
+          <span className="text-xs text-zinc-400">
+            {displayedHistory.length} de {filteredHistory.length} {filteredHistory.length === 1 ? 'registo' : 'registos'}
+          </span>
         </div>
         <OrdersTable
-          orders={filteredHistory.slice(0, 80)}
+          orders={displayedHistory.slice(0, 80)}
           loading={loading}
           actionId={actionId}
           ship2uBusyOrderId={ship2uBusyOrderId}
