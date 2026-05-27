@@ -523,7 +523,7 @@ function OverviewPanel({
     }
   };
 
-  const handleRunShip2uCypress = async (o: Order) => {
+  const handleRunShip2uCypress = async (o: Order, variant: 'default' | 'sem_retirada' = 'default') => {
     if (o.status !== 'expedido') {
       toast(
         'error',
@@ -532,19 +532,20 @@ function OverviewPanel({
       return;
     }
 
+    const variantLabel = variant === 'sem_retirada' ? 'Ship2U sem retirada' : 'Ship2U';
     setShip2uBusyOrderId(o.id);
     try {
       const ship2uRes = await api.post<{
         skipped?: boolean;
         success?: boolean;
         reason?: string;
-      }>(`/${o.id}/ship2u-cypress`, {}, {
+      }>(`/${o.id}/ship2u-cypress`, { variant }, {
         timeout: SHIP2U_CYPRESS_HTTP_TIMEOUT_MS,
       });
       if (!ship2uRes.data?.skipped && ship2uRes.data?.success !== false) {
         toast(
           'success',
-          `Pedido #${o.id}: Ship2U — automação no servidor concluída. Confirma na Ship2U que o envio aparece na lista.`,
+          `Pedido #${o.id}: ${variantLabel} — automação no servidor concluída. Confirma na Ship2U que o envio aparece na lista.`,
         );
       } else if (ship2uRes.data?.skipped && ship2uRes.data?.reason) {
         toast('success', ship2uRes.data.reason);
@@ -556,12 +557,12 @@ function OverviewPanel({
         || (ship2uErr?.code === 'ECONNABORTED'
           ? 'Tempo esgotado à espera do Cypress no servidor.'
           : ship2uErr?.message)
-        || 'Falha na automação Ship2U.';
+        || `Falha na automação ${variantLabel}.`;
       if (data?.logTail && typeof data.logTail === 'string') {
         const tail = data.logTail.trim().slice(-800);
-        console.error('[Ship2U Cypress log]', tail);
+        console.error(`[${variantLabel} Cypress log]`, tail);
       }
-      toast('error', `Ship2U: ${detail}`);
+      toast('error', `${variantLabel}: ${detail}`);
     } finally {
       setShip2uBusyOrderId(null);
     }
@@ -981,7 +982,7 @@ function OrdersTable({
   onConfirm: (o: Order) => void;
   onShip: (o: Order) => void;
   onMarkExpedited: (o: Order) => void;
-  onRunShip2uCypress: (o: Order) => void | Promise<void>;
+  onRunShip2uCypress: (o: Order, variant?: 'default' | 'sem_retirada') => void | Promise<void>;
   onPickupReady: (o: Order) => void;
   onPickupCollected: (o: Order) => void;
   onDelete: (o: Order) => void;
@@ -1030,7 +1031,13 @@ function OrdersTable({
                 && !isTrocaOrder(o);
               const needsShippingRow =
                 awaitingExpedir
-                || (o.status === 'expedido' && isHomeDeliveryOrder(o));
+                || (o.status === 'expedido' && isHomeDeliveryOrder(o))
+                // Pickup expedido ainda sem email de libertação → também precisa atenção
+                || (
+                  o.status === 'expedido'
+                  && isWebsiteStorePickup(o)
+                  && !o.pickup_ready_notified_at
+                );
               return (
               <tr
                 key={o.id}
@@ -1065,7 +1072,7 @@ function OrdersTable({
                         <Store size={9} /> Na loja
                       </span>
                     )}
-                    {o.pickup_ready_notified_at && isWebsiteStorePickup(o) && o.status === 'pago' && (
+                    {o.pickup_ready_notified_at && isWebsiteStorePickup(o) && o.status === 'expedido' && (
                       <span
                         title={`Email de levantamento enviado — ${new Date(o.pickup_ready_notified_at).toLocaleString('pt-PT')}`}
                         className="text-[9px] font-black bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded-full uppercase"
@@ -1204,16 +1211,26 @@ function OrdersTable({
               }}
             />
           )}
-          {current.status === 'expedido' && !isTrocaOrder(current) && (
+          {current.status === 'expedido' && isHomeDeliveryOrder(current) && (
             <>
               <DropItem
                 icon={<Bot size={14} />}
                 label="Ship2U"
-                title="Automação na plataforma Ship2U. Não altera o estado do pedido no HR Store."
+                title="Automação Ship2U com recolha agendada. Não altera o estado do pedido no HR Store."
                 disabled={actionId === current.id || ship2uBusyOrderId === current.id}
                 onClick={() => {
                   setOpenMenu(null);
-                  void onRunShip2uCypress(current);
+                  void onRunShip2uCypress(current, 'default');
+                }}
+              />
+              <DropItem
+                icon={<Bot size={14} />}
+                label="Ship2U Sem Retirada"
+                title="Automação Ship2U sem recolha (cliente / loja entrega ao estafeta)."
+                disabled={actionId === current.id || ship2uBusyOrderId === current.id}
+                onClick={() => {
+                  setOpenMenu(null);
+                  void onRunShip2uCypress(current, 'sem_retirada');
                 }}
               />
               <DropItem
@@ -1225,7 +1242,7 @@ function OrdersTable({
               />
             </>
           )}
-          {current.status === 'pago' && isWebsiteStorePickup(current) && (
+          {current.status === 'expedido' && isWebsiteStorePickup(current) && (
             <>
               <DropItem
                 icon={<PackageCheck size={14} />}
@@ -2634,7 +2651,7 @@ function OrderDetailsModal({
   onMarkPickupCollected?: (o: Order) => Promise<void>;
   onMarkExpedited?: (o: Order) => void | Promise<void>;
   /** Automação Ship2U no servidor (Cypress); só pedidos expedidos com entrega. */
-  onRunShip2uCypress?: (o: Order) => void | Promise<void>;
+  onRunShip2uCypress?: (o: Order, variant?: 'default' | 'sem_retirada') => void | Promise<void>;
   /** Marcar envio CTT (só com estado expedido). */
   onShip?: (o: Order) => void | Promise<void>;
 }) {
@@ -2744,7 +2761,7 @@ function OrderDetailsModal({
               </span>
             </div>
 
-            {order.pickup_ready_notified_at && isWebsiteStorePickup(order) && order.status === 'pago' && (
+            {order.pickup_ready_notified_at && isWebsiteStorePickup(order) && order.status === 'expedido' && (
               <div className="flex items-start gap-2 rounded-xl bg-teal-50 border border-teal-100 px-4 py-3 text-sm font-bold text-teal-900">
                 <PackageCheck size={18} className="shrink-0 text-teal-600 mt-0.5" />
                 <div>
@@ -2938,7 +2955,7 @@ function OrderDetailsModal({
               Pagamento Stripe
             </button>
           )}
-          {order && !loading && order.status === 'pago' && isWebsiteStorePickup(order) && onMarkPickupCollected && (
+          {order && !loading && order.status === 'expedido' && isWebsiteStorePickup(order) && onMarkPickupCollected && (
             <button
               type="button"
               disabled={collectBusy}
@@ -2961,7 +2978,7 @@ function OrderDetailsModal({
               Marcar como retirado na loja
             </button>
           )}
-          {order && !loading && order.status === 'pago' && isWebsiteStorePickup(order) && !order.pickup_ready_notified_at && (
+          {order && !loading && order.status === 'expedido' && isWebsiteStorePickup(order) && !order.pickup_ready_notified_at && (
             <button
               type="button"
               disabled={pickupBusy || !order.email?.trim()}
@@ -3028,26 +3045,47 @@ function OrderDetailsModal({
                   : 'Imprimir recibo'}
             </button>
           )}
-          {order && !loading && order.status === 'expedido' && !isTrocaOrder(order) && onRunShip2uCypress && (
-            <button
-              type="button"
-              disabled={ship2uCypressBusy || ship2uBusyOrderId === order.id}
-              title="Automação Ship2U no servidor. Não muda o estado do pedido aqui; depois de postar usa «Enviar via CTT»."
-              onClick={async () => {
-                setShip2uCypressBusy(true);
-                try {
-                  await onRunShip2uCypress(order);
-                  setReload((k) => k + 1);
-                  onPickupNotified?.();
-                } finally {
-                  setShip2uCypressBusy(false);
-                }
-              }}
-              className="px-5 py-2.5 rounded-xl bg-slate-800 text-white text-sm font-bold hover:bg-slate-900 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              {ship2uCypressBusy ? <RefreshCw className="animate-spin" size={16} /> : <Bot size={16} />}
-              {ship2uCypressBusy ? 'Ship2U em execução…' : 'Ship2U'}
-            </button>
+          {order && !loading && order.status === 'expedido' && isHomeDeliveryOrder(order) && onRunShip2uCypress && (
+            <>
+              <button
+                type="button"
+                disabled={ship2uCypressBusy || ship2uBusyOrderId === order.id}
+                title="Automação Ship2U com recolha agendada. Não muda o estado do pedido aqui; depois de postar usa «Enviar via CTT»."
+                onClick={async () => {
+                  setShip2uCypressBusy(true);
+                  try {
+                    await onRunShip2uCypress(order, 'default');
+                    setReload((k) => k + 1);
+                    onPickupNotified?.();
+                  } finally {
+                    setShip2uCypressBusy(false);
+                  }
+                }}
+                className="px-5 py-2.5 rounded-xl bg-slate-800 text-white text-sm font-bold hover:bg-slate-900 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {ship2uCypressBusy ? <RefreshCw className="animate-spin" size={16} /> : <Bot size={16} />}
+                {ship2uCypressBusy ? 'Ship2U em execução…' : 'Ship2U'}
+              </button>
+              <button
+                type="button"
+                disabled={ship2uCypressBusy || ship2uBusyOrderId === order.id}
+                title="Automação Ship2U sem recolha (cliente / loja entrega ao estafeta)."
+                onClick={async () => {
+                  setShip2uCypressBusy(true);
+                  try {
+                    await onRunShip2uCypress(order, 'sem_retirada');
+                    setReload((k) => k + 1);
+                    onPickupNotified?.();
+                  } finally {
+                    setShip2uCypressBusy(false);
+                  }
+                }}
+                className="px-5 py-2.5 rounded-xl bg-slate-700 text-white text-sm font-bold hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {ship2uCypressBusy ? <RefreshCw className="animate-spin" size={16} /> : <Bot size={16} />}
+                {ship2uCypressBusy ? 'A executar…' : 'Ship2U Sem Retirada'}
+              </button>
+            </>
           )}
           {order && !loading && order.status === 'expedido' && !isTrocaOrder(order) && onShip && (
             <button
