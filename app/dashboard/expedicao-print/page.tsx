@@ -46,6 +46,24 @@ type OrderPayload = {
   returned_items?: ReturnedItem[] | null;
 };
 
+/**
+ * Largura do papel térmico. Default: rolo 80mm com área imprimível ~72mm
+ * (os 80mm físicos têm margens laterais que a cabeça não alcança).
+ *
+ * Afina sem redeploy via env (aceita query string como override pontual):
+ *  - NEXT_PUBLIC_RECEIPT_PAPER_MM    → tamanho do @page (físico do rolo). Default 80.
+ *  - NEXT_PUBLIC_RECEIPT_CONTENT_MM  → largura útil do conteúdo. Default 72.
+ *
+ * Se a impressora entrar em loop / cortar errado, experimenta:
+ *  - paper 80 / content 72 (padrão da maioria das 80mm)
+ *  - paper 80 / content 76 (impressoras com margem mínima)
+ *  - paper 58 / content 48 (caso o rolo seja afinal de 58mm)
+ */
+function num(v: string | null | undefined, fallback: number): number {
+  const n = Number(String(v ?? '').trim());
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 function formatPtDate(iso: string): string {
   try {
     return new Date(iso).toLocaleString('pt-PT');
@@ -61,6 +79,17 @@ function ExpedicaoPrintInner() {
   const orderId = orderIdRaw ? parseInt(orderIdRaw, 10) : NaN;
   /** Separador aberto pelo admin após «Expedir»: só recibo + diálogo de impressão. */
   const kiosk = searchParams.get('kiosk') === '1';
+
+  // Largura do papel — env por defeito, query string sobrepõe para testes
+  // rápidos: /dashboard/expedicao-print?orderId=1&paper=80&content=72
+  const paperMm = num(
+    searchParams.get('paper'),
+    num(process.env.NEXT_PUBLIC_RECEIPT_PAPER_MM, 80),
+  );
+  const contentMm = num(
+    searchParams.get('content'),
+    num(process.env.NEXT_PUBLIC_RECEIPT_CONTENT_MM, 72),
+  );
 
   const [order, setOrder] = useState<OrderPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -151,67 +180,66 @@ function ExpedicaoPrintInner() {
   return (
     <div className={kiosk ? 'exp-kiosk' : undefined}>
       <style jsx global>{`
-        /* Largura física do rolo (térmica ~55 mm) — folha = conteúdo */
+        /* Largura útil do conteúdo (área imprimível da térmica). */
         :root {
-          --exp-paper-w: 55mm;
+          --exp-paper-w: ${contentMm}mm;
         }
-        /* Página de impressão / PDF com a mesma largura do recibo */
+        /* @page = largura FÍSICA do rolo; margin 0 (a térmica gere a própria
+           margem — margens em mm aqui descentram e podem causar feed extra). */
         @page {
-          size: 55mm auto;
-          margin: 2mm;
+          size: ${paperMm}mm auto;
+          margin: 0;
         }
         @media print {
-          html {
-            width: var(--exp-paper-w);
+          /* Geometria: altura SEMPRE = conteúdo. min-height:0 + overflow:hidden
+             impedem que qualquer wrapper estique a página e gere papel em branco. */
+          html,
+          body,
+          #__next,
+          body > div {
+            width: var(--exp-paper-w) !important;
+            max-width: var(--exp-paper-w) !important;
             height: auto !important;
+            min-height: 0 !important;
+            max-height: none !important;
             margin: 0 !important;
             padding: 0 !important;
             background: #fff !important;
+            overflow: hidden !important;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
-          }
-          body {
-            width: var(--exp-paper-w) !important;
-            max-width: var(--exp-paper-w) !important;
-            min-height: 0 !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            background: #fff !important;
-          }
-          body > div,
-          #__next {
-            width: var(--exp-paper-w) !important;
-            max-width: var(--exp-paper-w) !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            min-height: 0 !important;
-            background: transparent !important;
           }
           .exp-no-print {
             display: none !important;
           }
+          /* O wrap em ecrã é flex column com min-height:100vh; em impressão tem
+             de ser bloco simples sem altura forçada. */
+          .exp-receipt-wrap,
           .exp-receipt-outer {
+            display: block !important;
             width: var(--exp-paper-w) !important;
             max-width: var(--exp-paper-w) !important;
+            height: auto !important;
+            min-height: 0 !important;
             margin: 0 !important;
             padding: 0 !important;
             background: #fff !important;
             box-shadow: none !important;
           }
-          .exp-receipt-wrap {
-            width: var(--exp-paper-w) !important;
-            max-width: var(--exp-paper-w) !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            background: #fff !important;
-          }
           .exp-receipt {
             width: 100% !important;
             max-width: 100% !important;
+            height: auto !important;
             margin: 0 !important;
-            padding: 1mm 0 !important;
-            font-size: 9.5px;
-            line-height: 1.25;
+            padding: 1mm 1.5mm !important;
+            font-size: 12px;
+            line-height: 1.3;
+          }
+          /* Última linha sem margem/borda — evita "empurrar" altura extra. */
+          .exp-receipt > *:last-child {
+            margin-bottom: 0 !important;
+            padding-bottom: 0 !important;
+            border-bottom: 0 !important;
           }
         }
         /* Ecrã: folha com a mesma largura que vai imprimir */
@@ -302,15 +330,30 @@ function ExpedicaoPrintInner() {
               className="inline-flex items-center gap-2 rounded-xl bg-black px-4 py-2.5 text-sm font-bold text-white hover:bg-zinc-800 disabled:opacity-40"
             >
               <Printer size={16} />
-              Imprimir (55&nbsp;mm)
+              Imprimir ({paperMm}&nbsp;mm)
             </button>
           </div>
           <p className="text-xs text-zinc-600 leading-snug">
             Disponível para qualquer pedido <strong>pago</strong> (entrega ou levantamento na loja), via «Expedir pedido» nas vendas.
             Em pedidos com entrega, depois usa <strong>Enviar via CTT</strong> para marcar como enviado.
-            A folha branca de baixo tem <strong>55&nbsp;mm</strong> de largura (como no PDF).
-            No diálogo de impressão, se ainda vês A4, abre <strong>Mais definições</strong> e procura tamanho/escala compatível com a térmica ou imprime directamente na impressora 58&nbsp;mm.
+            A folha de baixo está a <strong>{paperMm}&nbsp;mm</strong> (conteúdo ~{contentMm}&nbsp;mm), igual ao que vai imprimir.
           </p>
+          <div className="text-[11px] text-zinc-600 leading-snug bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 space-y-1.5">
+            <p className="font-bold text-amber-900">Sai papel a mais / em branco no fim? É o tamanho do papel no diálogo.</p>
+            <p>
+              O recibo em si está correcto — o excesso vem do <strong>«Tamanho do papel»</strong> estar
+              fixo (ex.: A4 ou 80&times;297&nbsp;mm), que enche o resto da folha. No diálogo de impressão:
+            </p>
+            <ol className="list-decimal list-inside space-y-0.5">
+              <li><em>Destino</em>: a impressora térmica (não &ldquo;Guardar como PDF&rdquo;).</li>
+              <li><em>Tamanho do papel</em>: escolhe a opção de <strong>recibo / comprimento variável</strong> (no driver costuma chamar-se &ldquo;Receipt&rdquo;, &ldquo;Roll&rdquo; ou &ldquo;80mm x auto&rdquo;) — <strong>não</strong> uma altura fixa.</li>
+              <li><em>Margens</em>: Nenhuma · <em>Escala</em>: 100% (não &ldquo;Ajustar à página&rdquo;).</li>
+            </ol>
+            <p>
+              Afinação rápida sem rebuild: <code className="bg-zinc-100 px-1 rounded">?paper=80&amp;content=72</code> no URL
+              (ou <code className="bg-zinc-100 px-1 rounded">paper=58&amp;content=48</code> para rolo de 58&nbsp;mm).
+            </p>
+          </div>
           {loading && (
             <div className="flex items-center gap-2 text-zinc-500 py-8 justify-center">
               <RefreshCw className="animate-spin" size={20} />
