@@ -14,7 +14,7 @@ import { getDefaultShippingFeeEur } from '../../../lib/defaultShippingFee';
 import {
   canExpedirOrPrintOrder,
   isHomeDeliveryOrder,
-  openExpedicaoPrintTab,
+  openExpedicaoPdfTab,
 } from '../../../lib/orderDelivery';
 
 /** Cypress Ship2U pode demorar vários minutos — maior que o default do axios e alinhado com SHIP2U_CYPRESS_TIMEOUT_MS no backend. */
@@ -504,7 +504,14 @@ function OverviewPanel({
         await fetchAll();
       }
 
-      openExpedicaoPrintTab(o.id);
+      const openedPdf = openExpedicaoPdfTab(o.id);
+      if (!openedPdf) {
+        toast(
+          'error',
+          'Não foi possível abrir o preview do PDF. Confirma se o backend foi reiniciado e se a rota /api/orders/:id/receipt.pdf está disponível.',
+        );
+        return;
+      }
 
       if (wasPago && !skipExpedido) {
         toast(

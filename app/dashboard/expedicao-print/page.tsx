@@ -129,18 +129,6 @@ function ExpedicaoPrintInner() {
     };
   }, [orderId]);
 
-  useEffect(() => {
-    if (!kiosk || !order || error) return;
-    let cancelled = false;
-    const t = window.setTimeout(() => {
-      if (!cancelled) window.print();
-    }, 450);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [kiosk, order, error]);
-
   const itemsTotal = useMemo(() => {
     if (!order?.items?.length) return 0;
     return order.items.reduce(
@@ -184,10 +172,8 @@ function ExpedicaoPrintInner() {
         :root {
           --exp-paper-w: ${contentMm}mm;
         }
-        /* @page = largura FÍSICA do rolo; margin 0 (a térmica gere a própria
-           margem — margens em mm aqui descentram e podem causar feed extra). */
+        /* Evita incompatibilidades de alguns drivers quando size usa "auto". */
         @page {
-          size: ${paperMm}mm auto;
           margin: 0;
         }
         @media print {
