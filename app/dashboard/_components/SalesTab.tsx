@@ -508,7 +508,7 @@ function OverviewPanel({
       if (!openedPdf) {
         toast(
           'error',
-          'Não foi possível abrir o preview do PDF. Confirma se o backend foi reiniciado e se a rota /api/orders/:id/receipt.pdf está disponível.',
+          'Não foi possível abrir o recibo. Permite pop-ups para este site ou abre manualmente em Vendas.',
         );
         return;
       }

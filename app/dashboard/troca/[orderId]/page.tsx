@@ -237,10 +237,9 @@ export default function TrocaPage({ params }: { params: Promise<{ orderId: strin
         type: 'success',
         msg: `Troca registada — pedido #${res.data.orderId} criado. Estado: ${res.data.status}. Diferença: ${fmtEur(res.data.diff)}.`,
       });
-      // Abre sempre preview PDF (sem fallback HTML para manter comportamento único).
       const openedPdf = openExpedicaoPdfTab(res.data.orderId);
       if (!openedPdf) {
-        throw new Error('Não foi possível abrir preview PDF do recibo.');
+        throw new Error('Não foi possível abrir o recibo de impressão.');
       }
       // Volta ao dashboard depois de 2s
       setTimeout(() => router.push('/dashboard'), 1800);

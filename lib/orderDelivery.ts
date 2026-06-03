@@ -45,7 +45,7 @@ function receiptPaperContentFromEnv(): { paperMm?: number; contentMm?: number } 
  */
 export function receiptPdfPreviewPath(
   orderId: number,
-  opts?: { paperMm?: number; contentMm?: number },
+  opts?: { paperMm?: number; contentMm?: number; autoPrint?: boolean },
 ): string {
   const q = new URLSearchParams({ orderId: String(orderId) });
   const env = receiptPaperContentFromEnv();
@@ -53,23 +53,25 @@ export function receiptPdfPreviewPath(
   const content = opts?.contentMm ?? env.contentMm;
   if (paper) q.set('paper', String(paper));
   if (content) q.set('content', String(content));
+  /** Auto-impressão só se pedida explicitamente (preview por defeito). */
+  if (opts?.autoPrint === true) q.set('auto', '1');
   return `/dashboard/receipt-pdf?${q.toString()}`;
 }
 
-/** Rota legada HTML (fallback manual). */
+/** Recibo HTML no browser (sem PDF no backend). */
 export function expedicaoPrintPath(
   orderId: number,
   opts?: { kiosk?: boolean; autoPrint?: boolean; paperMm?: number; contentMm?: number },
 ): string {
   const q = new URLSearchParams({ orderId: String(orderId) });
+  const env = receiptPaperContentFromEnv();
+  const paper = opts?.paperMm ?? env.paperMm;
+  const content = opts?.contentMm ?? env.contentMm;
+  if (paper) q.set('paper', String(paper));
+  if (content) q.set('content', String(content));
   if (opts?.kiosk) q.set('kiosk', '1');
-  if (opts?.autoPrint) q.set('auto', '1');
-  if (Number.isFinite(opts?.paperMm) && Number(opts?.paperMm) > 0) {
-    q.set('paper', String(Number(opts.paperMm)));
-  }
-  if (Number.isFinite(opts?.contentMm) && Number(opts?.contentMm) > 0) {
-    q.set('content', String(Number(opts.contentMm)));
-  }
+  /** Impressão automática só se pedida explicitamente (evita loop no Windows). */
+  if (opts?.autoPrint === true) q.set('auto', '1');
   return `/dashboard/expedicao-print?${q.toString()}`;
 }
 
@@ -79,18 +81,35 @@ export function expedicaoPrintPath(
  */
 export function openExpedicaoPdfTab(
   orderId: number,
-  opts?: { paperMm?: number; contentMm?: number },
+  opts?: { paperMm?: number; contentMm?: number; autoPrint?: boolean },
 ): boolean {
   if (typeof window === 'undefined') return false;
-  const path = receiptPdfPreviewPath(orderId, opts);
+  const path = receiptPdfPreviewPath(orderId, {
+    ...opts,
+    autoPrint: opts?.autoPrint === true,
+  });
   const absUrl = `${window.location.origin}${path.startsWith('/') ? '' : '/'}${path}`;
   const w = window.open(absUrl, '_blank');
   return w != null;
 }
 
-/** @deprecated Usa openExpedicaoPdfTab. Mantido para referências antigas. */
-export function openExpedicaoPrintTab(orderId: number): void {
-  openExpedicaoPdfTab(orderId);
+/**
+ * Abre recibo HTML com preview — o utilizador clica «Imprimir» (sem auto=1).
+ */
+export function openExpedicaoPrintTab(
+  orderId: number,
+  opts?: { paperMm?: number; contentMm?: number; autoPrint?: boolean },
+): boolean {
+  if (typeof window === 'undefined') return false;
+  const path = expedicaoPrintPath(orderId, {
+    kiosk: false,
+    autoPrint: opts?.autoPrint === true,
+    paperMm: opts?.paperMm,
+    contentMm: opts?.contentMm,
+  });
+  const absUrl = `${window.location.origin}${path.startsWith('/') ? '' : '/'}${path}`;
+  const w = window.open(absUrl, '_blank');
+  return w != null;
 }
 
 export function shouldUsePdfReceipt(): boolean {
