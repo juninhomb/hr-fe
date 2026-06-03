@@ -237,7 +237,7 @@ export default function TrocaPage({ params }: { params: Promise<{ orderId: strin
         type: 'success',
         msg: `Troca registada — pedido #${res.data.orderId} criado. Estado: ${res.data.status}. Diferença: ${fmtEur(res.data.diff)}.`,
       });
-      const openedPdf = openExpedicaoPdfTab(res.data.orderId);
+      const openedPdf = openExpedicaoPdfTab(res.data.orderId, { autoPrint: true });
       if (!openedPdf) {
         throw new Error('Não foi possível abrir o recibo de impressão.');
       }

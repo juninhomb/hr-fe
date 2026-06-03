@@ -504,7 +504,7 @@ function OverviewPanel({
         await fetchAll();
       }
 
-      const openedPdf = openExpedicaoPdfTab(o.id);
+      const openedPdf = openExpedicaoPdfTab(o.id, { autoPrint: true });
       if (!openedPdf) {
         toast(
           'error',
