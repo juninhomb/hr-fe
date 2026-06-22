@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   Plus, Search, MoreHorizontal, Pencil, Trash2, RefreshCw, X,
   Layers, Package, Boxes, Euro, Image as ImageIcon, Upload, Sparkles,
-  Star, Eye, EyeOff, Filter, FileSpreadsheet,
+  Star, Eye, EyeOff, Filter, FileSpreadsheet, Tag,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import api, { resolveImageUrl } from '../../../lib/api';
@@ -38,6 +38,7 @@ export default function InventoryTab() {
   const [filterVisibility, setFilterVisibility] = useState<string>('all');
   const [filterStock, setFilterStock] = useState<string>('all');
   const [filterFeatured, setFilterFeatured] = useState<string>('all');
+  const [filterSaldo, setFilterSaldo] = useState<string>('all');
 
   const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
   const [createMode, setCreateMode] = useState<CreateMode>('new_product');
@@ -259,21 +260,25 @@ export default function InventoryTab() {
       if (filterStock === 'ok' && stock <= 2) return false;
       if (filterFeatured === 'yes' && !p.is_featured) return false;
       if (filterFeatured === 'no' && p.is_featured) return false;
+      if (filterSaldo === 'yes' && !p.is_saldo) return false;
+      if (filterSaldo === 'no' && p.is_saldo) return false;
       return true;
     });
-  }, [products, filterCategory, filterVisibility, filterStock, filterFeatured]);
+  }, [products, filterCategory, filterVisibility, filterStock, filterFeatured, filterSaldo]);
 
   const inventoryFiltersActive =
     filterCategory !== 'all' ||
     filterVisibility !== 'all' ||
     filterStock !== 'all' ||
-    filterFeatured !== 'all';
+    filterFeatured !== 'all' ||
+    filterSaldo !== 'all';
 
   const clearInventoryFilters = () => {
     setFilterCategory('all');
     setFilterVisibility('all');
     setFilterStock('all');
     setFilterFeatured('all');
+    setFilterSaldo('all');
   };
 
   const exportInventoryExcel = useCallback(() => {
@@ -290,6 +295,7 @@ export default function InventoryTab() {
       Stock: Number(item.stock) || 0,
       'Visível na loja': item.variant_is_active !== false ? 'Sim' : 'Não',
       Destaque: item.is_featured ? 'Sim' : 'Não',
+      Saldos: item.is_saldo ? 'Sim' : 'Não',
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
@@ -620,6 +626,18 @@ export default function InventoryTab() {
     }
   };
 
+  const toggleSaldo = async (item: any) => {
+    if (!item?.product_id) return;
+    try {
+      await api.patch(`/products/${item.product_id}/saldo`, {
+        is_saldo: !item.is_saldo,
+      });
+      fetchProducts();
+    } catch (err) {
+      console.error('Erro a alternar saldo:', err);
+    }
+  };
+
   const toggleVariantStoreVisibility = async (item: any) => {
     if (!item?.sku || visibilityBusySku === item.sku) return;
     const currentlyVisible = item.variant_is_active !== false;
@@ -807,6 +825,16 @@ export default function InventoryTab() {
                   { v: 'no', l: 'Sem destaque' },
                 ]}
               />
+              <InventoryFilterSelect
+                label="Saldos"
+                value={filterSaldo}
+                onChange={setFilterSaldo}
+                options={[
+                  { v: 'all', l: 'Todos' },
+                  { v: 'yes', l: 'Só saldos' },
+                  { v: 'no', l: 'Sem saldos' },
+                ]}
+              />
               {inventoryFiltersActive && (
                 <button
                   type="button"
@@ -860,6 +888,14 @@ export default function InventoryTab() {
                               className="inline-flex items-center gap-1 text-[9px] uppercase font-black tracking-wider px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200"
                             >
                               <Star size={9} className="fill-amber-500 text-amber-500" /> Destaque
+                            </span>
+                          )}
+                          {item.is_saldo && (
+                            <span
+                              title="Marcado como saldos"
+                              className="inline-flex items-center gap-1 text-[9px] uppercase font-black tracking-wider px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200"
+                            >
+                              <Tag size={9} /> Saldos
                             </span>
                           )}
                         </span>
@@ -994,6 +1030,20 @@ export default function InventoryTab() {
                     className={item.is_featured ? 'fill-amber-500 text-amber-500' : ''}
                   />
                   <span>{item.is_featured ? 'Remover destaque' : 'Marcar destaque'}</span>
+                </button>
+                <button
+                  onClick={() => { toggleSaldo(item); setOpenMenu(null); }}
+                  className={`w-full flex items-center space-x-2 px-4 py-2.5 text-sm transition text-left ${
+                    item.is_saldo
+                      ? 'text-rose-700 hover:bg-rose-50'
+                      : 'text-zinc-700 hover:bg-zinc-50'
+                  }`}
+                >
+                  <Tag
+                    size={14}
+                    className={item.is_saldo ? 'text-rose-600' : ''}
+                  />
+                  <span>{item.is_saldo ? 'Remover saldos' : 'Marcar saldos'}</span>
                 </button>
                 <button
                   type="button"
