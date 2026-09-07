@@ -119,6 +119,15 @@ function isPhysicalStoreTakeaway(o: Pick<Order, 'origin' | 'is_delivery'>): bool
   return orig === 'loja_fisica' && !del;
 }
 
+/**
+ * Origens que podem gerar link Stripe pelo admin: PDV e trocas.
+ * Na troca o Stripe cobra só a diferença a pagar, não os artigos novos.
+ */
+function canUseStripeLink(o: Pick<Order, 'origin'>): boolean {
+  const orig = String(o.origin || '').trim().toLowerCase();
+  return orig === 'loja_fisica' || orig === 'troca';
+}
+
 /** Pedido elegível para iniciar uma TROCA. Bloqueia trocas-de-trocas. */
 function canCreateTroca(o: Pick<Order, 'status' | 'origin'>): boolean {
   const s = String(o.status || '').trim().toLowerCase();
@@ -2925,7 +2934,7 @@ function OrderDetailsModal({
         <div className="p-4 border-t border-gray-50 flex flex-wrap items-center justify-end gap-2">
           {order && !loading
             && order.status === 'aguardando_pagamento'
-            && String(order.origin || '').trim().toLowerCase() === 'loja_fisica'
+            && canUseStripeLink(order)
             && String(order.payment_method || '').trim().toLowerCase() === 'stripe' && (
             <button
               type="button"

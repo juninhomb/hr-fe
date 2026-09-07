@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import api from '../../../../lib/api';
-import { openExpedicaoPdfTab } from '../../../../lib/orderDelivery';
+import { openExpedicaoPdfTab, receiptPdfPreviewPath } from '../../../../lib/orderDelivery';
 
 type OriginalItem = {
   id: number;
@@ -89,6 +89,8 @@ export default function TrocaPage({ params }: { params: Promise<{ orderId: strin
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  /** Preenchido assim que a troca existe no backend — trava novos envios. */
+  const [createdTrocaId, setCreatedTrocaId] = useState<number | null>(null);
 
   // Fetch original order + already-returned summary
   useEffect(() => {
@@ -159,13 +161,19 @@ export default function TrocaPage({ params }: { params: Promise<{ orderId: strin
   );
   const diff = useMemo(() => Math.round((newTotal - returnedTotal) * 100) / 100, [newTotal, returnedTotal]);
 
+  /** Reembolso sai da caixa/transferência — a Stripe só serve para cobrar. */
+  const isRefund = diff < 0;
+  const paymentOptionDisabled = (v: Payment) =>
+    diff === 0 || (isRefund && v === 'stripe');
+
   const canConfirm =
     !loading &&
     !error &&
     !submitting &&
+    createdTrocaId === null &&
     returnedRows.some((r) => r.quantity > 0) &&
     newLines.length > 0 &&
-    diff >= 0;
+    !(isRefund && payment === 'stripe');
 
   const addVariant = (v: Variant) => {
     const stock = Number(v.stock);
@@ -233,16 +241,26 @@ export default function TrocaPage({ params }: { params: Promise<{ orderId: strin
         payment_method: string;
       }>('/troca', payload);
 
+      /**
+       * A troca já existe no backend a partir daqui. Guardamos o id para travar o
+       * botão — reenviar criaria uma segunda troca e mexeria no stock outra vez.
+       */
+      const newId = res.data.orderId;
+      setCreatedTrocaId(newId);
+
+      const valorMsg = res.data.diff < 0
+        ? `A devolver ao cliente: ${fmtEur(Math.abs(res.data.diff))}.`
+        : `Diferença: ${fmtEur(res.data.diff)}.`;
+
+      // Popup bloqueado não invalida a troca: oferecemos o recibo por link.
+      const openedPdf = openExpedicaoPdfTab(newId, { autoPrint: true });
       setFeedback({
         type: 'success',
-        msg: `Troca registada — pedido #${res.data.orderId} criado. Estado: ${res.data.status}. Diferença: ${fmtEur(res.data.diff)}.`,
+        msg: `Troca registada — pedido #${newId} criado. Estado: ${res.data.status}. ${valorMsg}`
+          + (openedPdf ? '' : ' O browser bloqueou a janela do recibo — abre-o aqui.'),
       });
-      const openedPdf = openExpedicaoPdfTab(res.data.orderId, { autoPrint: true });
-      if (!openedPdf) {
-        throw new Error('Não foi possível abrir o recibo de impressão.');
-      }
-      // Volta ao dashboard depois de 2s
-      setTimeout(() => router.push('/dashboard'), 1800);
+
+      if (openedPdf) setTimeout(() => router.push('/dashboard'), 1800);
     } catch (err: any) {
       setFeedback({
         type: 'error',
@@ -509,9 +527,10 @@ export default function TrocaPage({ params }: { params: Promise<{ orderId: strin
               {diff < 0 ? '−' : ''}
               {fmtEur(Math.abs(diff))}
             </p>
-            {diff < 0 && (
+            {isRefund && (
               <p className="text-[11px] font-bold text-rose-600 mt-0.5">
-                Reembolso não suportado — gerir manualmente.
+                A devolver ao cliente: {fmtEur(Math.abs(diff))}
+                {payment === 'stripe' && ' — escolhe Dinheiro ou MB Way / transf.'}
               </p>
             )}
             {diff > 0 && (
@@ -532,7 +551,7 @@ export default function TrocaPage({ params }: { params: Promise<{ orderId: strin
               ]
             ).map((p) => {
               const active = payment === p.v;
-              const disabled = diff === 0; // se diff = 0 não cobra
+              const disabled = paymentOptionDisabled(p.v);
               return (
                 <button
                   key={p.v}
@@ -569,6 +588,10 @@ export default function TrocaPage({ params }: { params: Promise<{ orderId: strin
                 <>
                   <RefreshCw size={14} className="animate-spin" /> A confirmar…
                 </>
+              ) : createdTrocaId !== null ? (
+                <>
+                  <Check size={14} /> Troca #{createdTrocaId} criada
+                </>
               ) : (
                 <>
                   <Printer size={14} /> Confirmar troca
@@ -579,7 +602,7 @@ export default function TrocaPage({ params }: { params: Promise<{ orderId: strin
         </div>
 
         {feedback && (
-          <div className="max-w-7xl mx-auto px-6 pb-3">
+          <div className="max-w-7xl mx-auto px-6 pb-3 flex flex-wrap items-center gap-2">
             <div
               className={`inline-flex items-center gap-2 text-xs font-bold px-3 py-2 rounded-full ${
                 feedback.type === 'success'
@@ -590,6 +613,26 @@ export default function TrocaPage({ params }: { params: Promise<{ orderId: strin
               {feedback.type === 'success' ? <Check size={12} /> : <AlertCircle size={12} />}
               {feedback.msg}
             </div>
+
+            {createdTrocaId !== null && (
+              <>
+                <a
+                  href={receiptPdfPreviewPath(createdTrocaId, { autoPrint: true })}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-full bg-black text-white text-xs font-bold hover:bg-zinc-800"
+                >
+                  <Printer size={12} /> Abrir recibo
+                </a>
+                <button
+                  type="button"
+                  onClick={() => router.push('/dashboard')}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-full bg-zinc-100 text-xs font-bold hover:bg-zinc-200"
+                >
+                  Voltar ao dashboard
+                </button>
+              </>
+            )}
           </div>
         )}
 

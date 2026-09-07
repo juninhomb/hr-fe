@@ -454,8 +454,8 @@ function ExpedicaoPrintInner() {
                     <span>− € {returnedTotal.toFixed(2)}</span>
                   </div>
                   <div className="row font-black mt-2 text-[12px]">
-                    <span>DIFERENÇA</span>
-                    <span>€ {Number(order.total_amount || 0).toFixed(2)}</span>
+                    <span>{Number(order.total_amount || 0) < 0 ? 'A DEVOLVER' : 'DIFERENÇA'}</span>
+                    <span>€ {Math.abs(Number(order.total_amount || 0)).toFixed(2)}</span>
                   </div>
                 </>
               ) : (
