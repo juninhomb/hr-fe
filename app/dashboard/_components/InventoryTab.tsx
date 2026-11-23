@@ -29,6 +29,33 @@ type Category = { id: number; name: string };
 type CatalogColor = { id: number; name: string; sort_order: number };
 type CreateMode = 'new_product' | 'new_variant';
 
+/**
+ * Um SKU pode conter `/` (ex.: `JAQ-CAR-BOR-L/XL`). Cru no URL, a barra parte o
+ * caminho e o backend responde 404 em `/products/:sku`, sem tocar no produto.
+ */
+function skuPath(sku: string): string {
+  return encodeURIComponent(String(sku ?? ''));
+}
+
+/**
+ * Espelha as regras de `src/utils/sku.js` no backend, para o operador ver o
+ * problema enquanto escreve em vez de levar com um erro depois de gravar.
+ * Devolve a razão da recusa, ou null quando o SKU serve.
+ */
+function skuFormatProblem(raw: string): string | null {
+  const sku = raw.trim().toUpperCase();
+  if (!sku) return null;
+
+  const invalid = [...new Set(sku.match(/[^A-Z0-9._-]/g) || [])];
+  if (invalid.length) {
+    const list = invalid.map((c) => (c === ' ' ? 'espaço' : `«${c}»`)).join(', ');
+    return `Não pode conter ${list} — usa letras, dígitos, ponto, underscore ou hífen.`;
+  }
+  if (!/^[A-Z0-9]/.test(sku)) return 'Tem de começar por letra ou dígito.';
+  if (sku.length < 3) return 'Mínimo 3 caracteres.';
+  return null;
+}
+
 export default function InventoryTab() {
   const [products, setProducts] = useState<any[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -243,6 +270,11 @@ export default function InventoryTab() {
     const skuUp = form.sku.trim().toUpperCase();
     return products.some(p => p.sku === skuUp);
   }, [form.sku, products, modalMode]);
+
+  const skuFormatError = useMemo(
+    () => (modalMode === 'create' ? skuFormatProblem(form.sku) : null),
+    [form.sku, modalMode],
+  );
 
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
@@ -486,6 +518,11 @@ export default function InventoryTab() {
       return;
     }
 
+    if (modalMode === 'create' && skuFormatError) {
+      setFormError(`SKU inválido. ${skuFormatError}`);
+      return;
+    }
+
     let resolvedColorId: number | null = null;
     if (form.color_id && String(form.color_id).trim() !== '') {
       const n = parseInt(form.color_id, 10);
@@ -547,7 +584,7 @@ export default function InventoryTab() {
           }
         }
       } else {
-        await api.put(`/products/${editingProduct.sku}`, {
+        await api.put(`/products/${skuPath(editingProduct.sku)}`, {
           name: form.name.trim(),
           base_price: parseFloat(form.base_price) || 0,
           color_id: resolvedColorId,
@@ -601,7 +638,7 @@ export default function InventoryTab() {
     setDeleting(true);
     setDeleteError('');
     try {
-      await api.delete(`/products/${deletingProduct.sku}`);
+      await api.delete(`/products/${skuPath(deletingProduct.sku)}`);
       setDeletingProduct(null);
       fetchProducts();
     } catch (err: any) {
@@ -643,10 +680,16 @@ export default function InventoryTab() {
     const currentlyVisible = item.variant_is_active !== false;
     setVisibilityBusySku(item.sku);
     try {
-      await api.put(`/products/${item.sku}`, { variant_is_active: !currentlyVisible });
+      await api.put(`/products/${skuPath(item.sku)}`, { variant_is_active: !currentlyVisible });
       await fetchProducts();
-    } catch (err) {
+    } catch (err: any) {
+      // Sem aviso, um erro aqui é indistinguível de "não aconteceu nada".
       console.error('Erro a alterar visibilidade na loja:', err);
+      setImportNotice({
+        ok: false,
+        text: err?.response?.data?.error
+          || `Não foi possível ${currentlyVisible ? 'ocultar' : 'mostrar'} ${item.sku} na loja.`,
+      });
     } finally {
       setVisibilityBusySku(null);
     }
@@ -1342,7 +1385,7 @@ export default function InventoryTab() {
                   value={form.sku}
                   onChange={e => setForm(f => ({ ...f, sku: e.target.value.toUpperCase() }))}
                   className={`w-full border rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 ${
-                    skuConflict
+                    skuConflict || skuFormatError
                       ? 'border-red-300 focus:ring-red-500 bg-red-50'
                       : 'border-gray-200 focus:ring-black'
                   } ${modalMode === 'edit' ? 'bg-zinc-50 text-zinc-400 cursor-not-allowed' : ''}`}
@@ -1350,6 +1393,9 @@ export default function InventoryTab() {
                 />
                 {skuConflict && (
                   <p className="text-[11px] text-red-600 font-bold mt-1">⚠ Este SKU já está em uso.</p>
+                )}
+                {!skuConflict && skuFormatError && (
+                  <p className="text-[11px] text-red-600 font-bold mt-1">⚠ {skuFormatError}</p>
                 )}
               </div>
 
@@ -1437,7 +1483,7 @@ export default function InventoryTab() {
                 </button>
                 <button
                   type="submit"
-                  disabled={saving || skuConflict || compressingFiles > 0}
+                  disabled={saving || skuConflict || !!skuFormatError || compressingFiles > 0}
                   className="flex-1 bg-black text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-zinc-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {saving
